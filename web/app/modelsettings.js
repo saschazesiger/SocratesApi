@@ -44,8 +44,8 @@ const FIELDS = [
       ['mlock', 'Locked in RAM', 'Like memory-mapped, but pinned: never dropped or swapped out, so speed stays even. Needs enough free RAM.'],
       ['ram', 'Copied into RAM', 'Read into the engine\'s own memory at the start. Nothing is read from the NVMe later; the start is slower and needs enough free RAM.'],
     ] },
-  { key: 'preload', group: 'memory', kind: 'switch', label: 'Read the RAM part right after the start', def: true,
-    hint: () => 'So the first answer is not slowed down by reading weights from the disk.' },
+  { key: 'preload', group: 'memory', kind: 'switch', label: 'Read the RAM weights in after start', def: true,
+    hint: () => 'Fills free RAM with the weights that live there, so the first answers do not wait for the NVMe. Never takes more than the free RAM.' },
   { key: 'gpuReserveMb', group: 'memory', kind: 'number', label: 'VRAM kept free', unit: 'MB', placeholder: '1024', min: 0, step: 256,
     hint: () => 'What the automatic fit leaves for the desktop and other programs on the GPU.' },
 

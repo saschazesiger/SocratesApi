@@ -75,7 +75,6 @@ function current() {
 
 /* The run in flight (one at a time): its message, phase and figures. It outlives the view, so leaving the page does not stop it. */
 let run = null;
-let lastStats = null;
 
 function phaseOf(chunk, r) {
   const choice = chunk.choices && chunk.choices[0];
@@ -156,7 +155,6 @@ async function send(text) {
   chat.updatedAt = now;
   const r = { msg, chat, phase: 'sending', progress: null, count: 0, tps: 0, timings: null, usage: null, startedAt: now, phaseStart: 0, controller: new AbortController() };
   run = r;
-  lastStats = null;
   renderLog();
   setBusy(true);
   stickToEnd();
@@ -178,7 +176,6 @@ async function send(text) {
   if (msg.reasoning && !msg.reasoningMs && msg.reasoningSince) msg.reasoningMs = Date.now() - msg.reasoningSince;
   if (msg.state !== 'error' || r.timings) {
     msg.stats = statsOf(r);
-    lastStats = msg.stats;
   }
   delete msg.live;
   run = null;
@@ -260,7 +257,7 @@ function logHtml(chat) {
 /* ── The live line ────────────────────────────────────────────────── */
 
 function busyLine(word, rest) {
-  return `<span class="ds-spinner ds-sm" aria-hidden="true"></span><span class="ds-shimmer" data-shimmer="${esc(word)}">${esc(word)}</span>${rest ? `<span class="ds-meta so-statusline__rest">${esc(rest)}</span>` : ''}`;
+  return `<span class="ds-spinner" aria-hidden="true"></span><span class="ds-shimmer" data-shimmer="${esc(word)}">${esc(word)}</span>${rest ? `<span class="ds-meta so-statusline__rest">${esc(rest)}</span>` : ''}`;
 }
 
 function quietLine(glyph, text, link = '') {
@@ -300,9 +297,8 @@ function statusLine() {
   }
   if (!e.modelId || e.state === 'stopped') return quietLine('stopCircle', 'No model is loaded · activate one on ', models);
   if (e.state !== 'ready') {
-    return quietLine('clock', `${esc(e.modelName)} is loading${e.progress != null ? ` · ${pct(e.progress)}` : ''} · you can send already, the answer waits for it`);
+    return quietLine('clock', `${esc(e.message || `${e.modelName} is loading`)}${e.progress != null ? ` · ${pct(e.progress)}` : ''} · you can send already, the answer waits for it`);
   }
-  if (lastStats) return quietLine('checkCircle', esc(statsText(lastStats)));
   return quietLine('checkCircle', `Ready · ${esc(e.modelName)}${e.ctx ? ` · ${num(e.ctx)} tokens context` : ''}`);
 }
 
@@ -475,7 +471,6 @@ const view = {
       if (run) stop();
       const chat = current();
       if (chat.messages.length) store.currentId = '';
-      lastStats = null;
       current();
       save(true);
       renderLog();
@@ -499,7 +494,6 @@ const view = {
       const chat = current();
       const i = chat.messages.map((m) => m.role).lastIndexOf('assistant');
       if (i >= 0) chat.messages.splice(i, 1);
-      lastStats = null;
       send('');
     }
   },
@@ -510,7 +504,6 @@ const view = {
     if (open) {
       if (run) stop();
       store.currentId = open.getAttribute('data-open-chat');
-      lastStats = null;
       save(true);
       renderLog();
       paintStatus();

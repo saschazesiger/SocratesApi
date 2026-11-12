@@ -9,7 +9,7 @@
 import * as api from './api.js';
 import { ctx } from './main.js';
 import {
-  $, M, esc, icon, head, busyButton, alertHtml, empty, toast, toastError, showFieldErrors, clearErrors,
+  $, M, esc, icon, head, chip, busyButton, alertHtml, empty, toast, toastError, showFieldErrors, clearErrors,
   num, size, params, ago,
 } from './ui.js';
 import { FITS } from './placement.js';
@@ -23,7 +23,7 @@ const QUANTS = [
   ['Q8_0', 8.5, 'Practically the original, twice the size of Q4'],
 ];
 
-const state = { query: '', timer: 0, seq: 0, nameTouched: false };
+const state = { query: '', timer: 0, seq: 0, nameTouched: false, prefetched: null };
 
 /** A repository id from what was typed or pasted: owner/name, or a link to huggingface.co. */
 export function repoFrom(text) {
@@ -79,25 +79,89 @@ async function search(query) {
   DS.dom.morphHtml(slot, error ? alertHtml('error', 'Hugging Face could not be searched', esc(error.message)) : resultsHtml(found, query));
 }
 
+/** Opens a repository named by owner/name if Hugging Face knows it; false (and nothing changes) if not. */
+async function openRepo(id) {
+  const seq = ++state.seq;
+  const slot = $('#hf-results', ctx.page);
+  if (slot) slot.classList.add('ds-stale');
+  let repo = null;
+  try {
+    repo = await api.get(`/api/hf/repo?id=${encodeURIComponent(id)}`);
+  } catch (error) {
+    repo = null;
+  }
+  if (slot) slot.classList.remove('ds-stale');
+  if (seq !== state.seq) return true;
+  if (!repo) return false;
+  state.prefetched = repo;
+  ctx.go(`#/models/add?repo=${encodeURIComponent(repo.id || id)}`);
+  return true;
+}
+
 /* ── A repository ─────────────────────────────────────────────────── */
 
 function installedQuant(d, repo, quant) {
   return d.models.some((m) => m.repo === repo && m.quant === quant);
 }
 
+/*
+ * The variants shown at once: the common K-quants and Q8_0 that run here, under 16 bits. The rest (I-quants, legacy
+ * Q4_0 ... Q5_1, _S and _L flavours, full precision, unknown formats, too large) waits behind "Show all".
+ */
+const COMMON = /^(UD-)?Q[2-6]_K(_M|_XL)?$|^(UD-)?Q8_(0|K_XL)$/i;
+const usual = (v) => v.fit !== 'no' && v.bits > 0 && v.bits < 16;
+const common = (v) => usual(v) && COMMON.test(v.quant);
+
+/** The variant's note without what its fit chip says already ("Fits on the GPU with 32k context" → "With 32k context"). */
+function noteOf(v) {
+  const [, label] = FITS[v.fit] || FITS.no;
+  let note = String(v.note || '').trim();
+  if (note.toLowerCase().startsWith(label.toLowerCase())) note = note.slice(label.length).replace(/^[\s,:;.-]+/, '');
+  else if (v.fit === 'gpu') note = note.replace(/^fits on the gpu\s*/i, '');
+  return note ? note[0].toUpperCase() + note.slice(1) : '';
+}
+
+function fitChipHtml(v) {
+  const [kind, label, glyph] = FITS[v.fit] || FITS.no;
+  return chip(kind, label, glyph);
+}
+
+/* One line per variant: quant · size · fit; the note only as the tooltip, it shows below the list once chosen. */
+function variantRow(d, r, v, i, checked) {
+  const installed = installedQuant(d, r.id, v.quant);
+  const note = noteOf(v);
+  return `<div><label class="ds-check"${note ? ` data-tip="${esc(note)}"` : ''}><input type="radio" name="variant" value="${i}"${checked ? ' checked' : ''}>` +
+    `<span>${esc(v.quant)} · ${size(v.size)}${v.files.length > 1 ? ` · ${v.files.length} files` : ''}${installed ? ' · installed' : ''}</span> ${fitChipHtml(v)}</label></div>`;
+}
+
+function chosenHtml(v) {
+  if (!v) return '';
+  const note = noteOf(v);
+  return `${fitChipHtml(v)} <span class="ds-meta">${esc(v.quant)} · ${size(v.size)}${note ? ` · ${esc(note)}` : ''}</span>`;
+}
+
 function variantsHtml(d, r) {
-  const pickIndex = Math.max(0, r.variants.findIndex((v) => v.recommended));
-  return `<fieldset class="ds-field"><legend class="ds-field__label">Quantisation</legend>` +
-    '<p class="ds-field__hint">Smaller files fit better and run faster; larger ones answer a little better. The fit is for this machine with the default 32k context.</p>' +
-    `<div class="ds-radios so-variants" role="radiogroup" aria-label="Quantisation">${r.variants.map((v, i) => {
-      const installed = installedQuant(d, r.id, v.quant);
-      const [, fitLabel, fitGlyph] = FITS[v.fit] || FITS.no;
-      return `<label class="ds-radio"><input type="radio" name="variant" value="${i}"${i === pickIndex ? ' checked' : ''}>` +
-        `<span><strong>${esc(v.quant)} · ${size(v.size)}</strong>` +
-        (v.recommended ? `<small>${icon('star', 16)} Recommended for this machine</small>` : '') +
-        (installed ? `<small>${icon('check', 16)} Installed already</small>` : '') +
-        `<small>${icon(fitGlyph, 16)} <b>${esc(fitLabel)}</b></small><small>${esc(v.note)}${v.files.length > 1 ? ` · ${v.files.length} files` : ''}</small></span></label>`;
-    }).join('')}</div></fieldset>`;
+  const indexed = r.variants.map((v, i) => ({ v, i })).sort((a, b) => a.v.size - b.v.size);
+  const best = indexed.find(({ v }) => v.recommended) || indexed.find(({ v }) => usual(v)) || indexed[0];
+  const rest = indexed.filter((x) => x !== best);
+  const shown = rest.filter(({ v }) => common(v));
+  const hidden = rest.filter(({ v }) => !common(v));
+  const b = best.v;
+  const bestNote = noteOf(b);
+  return '<fieldset class="ds-field"><legend class="ds-field__label">Quantisation</legend>' +
+    '<p class="ds-field__hint">Smaller files fit better and run faster; larger ones answer a little better. The fit is for this machine.</p>' +
+    '<div class="ds-stack">' +
+      `<div class="ds-radios"><label class="ds-radio"><input type="radio" name="variant" value="${best.i}" checked>` +
+        `<span><strong>${esc(b.quant)} · ${size(b.size)}</strong>` +
+        `<small>${icon('star', 16)} ${b.recommended ? 'Recommended for this machine' : 'A good start'}${installedQuant(d, r.id, b.quant) ? ' · installed already' : ''}</small>` +
+        `<small>${icon((FITS[b.fit] || FITS.no)[2], 16)} <b>${esc((FITS[b.fit] || FITS.no)[1])}</b>${bestNote ? ` · ${esc(bestNote)}` : ''}</small></span></label></div>` +
+      (shown.length ? `<div role="group" aria-label="Other sizes"><p class="ds-meta">Other sizes</p>${shown.map(({ v, i }) => variantRow(d, r, v, i, false)).join('')}</div>` : '') +
+      (hidden.length
+        ? `<details class="ds-collapsible ds-disclosure"><summary>Show all ${r.variants.length} (${hidden.length} more: I-quants, legacy, full precision, too large)${icon('chevronDown', 20, 'ds-chevron')}</summary>` +
+          `<div class="ds-disclosure__body" role="group" aria-label="More sizes">${hidden.map(({ v, i }) => variantRow(d, r, v, i, false)).join('')}</div></details>`
+        : '') +
+      `<p id="add-chosen" aria-live="polite" data-best="${best.i}"></p>` +
+    '</div></fieldset>';
 }
 
 function visionHtml(r) {
@@ -198,10 +262,12 @@ export default {
 
   async load(params) {
     const id = params.get('repo') || '';
+    const known = state.prefetched && state.prefetched.id.toLowerCase() === id.toLowerCase() ? state.prefetched : null;
+    state.prefetched = null;
     const [models, settings, repo] = await Promise.all([
       api.get('/api/models'),
       api.get('/api/settings'),
-      id ? api.get(`/api/hf/repo?id=${encodeURIComponent(id)}`).then((r) => ({ r }), (error) => ({ error })) : Promise.resolve({}),
+      known ? Promise.resolve({ r: known }) : id ? api.get(`/api/hf/repo?id=${encodeURIComponent(id)}`).then((r) => ({ r }), (error) => ({ error })) : Promise.resolve({}),
     ]);
     return { models: models.models, freeBytes: models.freeBytes, dataDir: models.dataDir, settings, repo: repo.r || null, repoError: repo.error ? repo.error.message : '', q: params.get('q') || '' };
   },
@@ -244,13 +310,11 @@ export default {
     const d = ctx.data;
     if (type === 'input' && t.id === 'hf-q') {
       clearTimeout(state.timer);
-      state.timer = setTimeout(() => {
+      // A pasted owner/name or link opens its repository at once; typed text searches (a half-typed name may exist too).
+      const pasted = event.inputType === 'insertFromPaste' || event.inputType === 'insertFromDrop' || /huggingface\.co\/|hf\.co\//i.test(t.value);
+      state.timer = setTimeout(async () => {
         const q = t.value.trim();
-        if (/huggingface\.co\/|hf\.co\//i.test(q) && repoFrom(q)) {
-          // A pasted link: open its repository at once.
-          ctx.go(`#/models/add?repo=${encodeURIComponent(repoFrom(q))}`);
-          return;
-        }
+        if (pasted && repoFrom(q) && await openRepo(repoFrom(q))) return;
         history.replaceState(null, '', `#/models/add${q ? `?q=${encodeURIComponent(q)}` : ''}`);
         const results = $('#hf-results', ctx.page);
         if (results && results.hidden) {
@@ -266,7 +330,8 @@ export default {
       clearTimeout(state.timer);
       const value = $('#hf-q', ctx.page).value;
       const repo = repoFrom(value);
-      if (repo) ctx.go(`#/models/add?repo=${encodeURIComponent(repo)}`);
+      if (repo && await openRepo(repo)) return;
+      if (repo) search(value.trim());
       else ctx.go(`#/models/add${value.trim() ? `?q=${encodeURIComponent(value.trim())}` : ''}`, { replace: true });
       return;
     }
@@ -279,6 +344,8 @@ export default {
       const name = $('#add-name', ctx.page);
       if (name && !state.nameTouched) name.value = `${shortName(d.repo.id)} · ${v.quant}`;
       DS.dom.morphHtml($('#add-room', ctx.page), roomText(v, d.freeBytes));
+      const chosen = $('#add-chosen', ctx.page);
+      DS.dom.morphHtml(chosen, t.value === chosen.getAttribute('data-best') ? '' : `Chosen: ${chosenHtml(v)}`);
       return;
     }
     if (type === 'change' && t.id === 'convert-quant') {

@@ -24,7 +24,7 @@ function bar({ key, label, total, totalText, parts, note }) {
     `<ul class="ds-legend" aria-hidden="true">${parts.filter((p) => p.value > 0 || p.always).map((p) =>
       `<li data-ds-key="${key}-l-${p.id}"><span class="ds-legend__key${keyClass(p.s)}"></span>${esc(p.label)} <span class="ds-category-bar__value">${esc(p.text || mem(p.value))}</span></li>`).join('')}</ul>` +
     '</figure>' +
-    (note ? `<p class="ds-meta">${note}</p>` : '') + '</div>';
+    (Array.isArray(note) ? note : note ? [note] : []).map((n) => `<p class="ds-meta">${n}</p>`).join('') + '</div>';
 }
 
 /**
@@ -72,7 +72,7 @@ export function placementHtml(placement, system, others, { live = false } = {}) 
         ? `${num(L.gpu)} of ${num(L.total)} layers on the GPU, the experts of ${plural(L.expertLayersOnCpu, 'layer')} in RAM`
         : `All ${num(L.total)} layers on the GPU, experts included`)
       : `${num(L.gpu)}/${num(L.total)} layers on the GPU`;
-    const liveText = live ? ` · ${gpu.util} % busy · ${gpu.tempC} °C · ${gpu.powerW} W` : '';
+    const liveText = live ? ` · ${Math.round(gpu.util)} % busy · ${Math.round(gpu.tempC)} °C · ${Math.round(gpu.powerW)} W` : '';
     out.push(bar({
       key: 'gpu',
       label: `${icon('cpu', 16)} GPU · ${esc(gpu.name.replace(/^NVIDIA (GeForce )?/, ''))}`,
@@ -119,20 +119,28 @@ export function placementHtml(placement, system, others, { live = false } = {}) 
 
   if (system && system.disk) {
     const disk = system.disk;
-    const weights = p.disk ? p.disk.weights : 0;
-    const usedOther = Math.max(0, disk.total - disk.free - weights);
+    const weights = p.disk ? p.disk.weights || 0 : 0;
+    const lookup = p.disk ? p.disk.lookup || 0 : 0;
+    const usedOther = Math.max(0, disk.total - disk.free - weights - lookup);
+    const notes = [];
+    if (weights) {
+      notes.push(`${icon('alert', 16)}${esc(size(weights))} of weights do not fit into RAM and are read from here while the model answers: the slow tier, generation slows down.`);
+    }
+    if (lookup) {
+      notes.push(`${icon('info', 16)}${esc(size(lookup))} of lookup tables (token embeddings) stay in the file: each token reads only its own rows, so they barely slow the model down.`);
+    }
+    if (!notes.length) notes.push(`${icon('checkCircle', 16)}Nothing is read from the NVMe while the model answers.`);
     out.push(bar({
       key: 'disk',
       label: `${icon('hardDrive', 16)} NVMe · ${esc(disk.path)}`,
       total: disk.total,
       totalText: `${size(disk.free)} free of ${size(disk.total)}`,
       parts: [
-        { id: 'w', label: 'Weights read from here', value: weights, text: weights ? size(weights) : 'none', s: 1, always: true },
+        { id: 'w', label: 'Weights not in RAM', value: weights, text: weights ? size(weights) : 'none', s: 1, always: true },
+        { id: 'l', label: 'Lookup tables, read by row', value: lookup, text: size(lookup), s: 2 },
         { id: 'o', label: 'Other data', value: usedOther, text: size(usedOther), s: 'n' },
       ],
-      note: weights
-        ? `${icon('alert', 16)}${esc(size(weights))} of weights are read from here while the model answers: the slowest tier.`
-        : `${icon('checkCircle', 16)}Nothing is read from the NVMe while the model answers.`,
+      note: notes,
     }));
   }
   return `<div class="so-tiers">${out.join('')}</div>`;

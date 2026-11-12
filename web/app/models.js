@@ -14,7 +14,7 @@ import { placementHtml, othersOf } from './placement.js';
 
 const DS = window.DS;
 
-const STAGES = { text_model: 'model weights', spec_model: 'draft model', mmproj_model: 'vision projector' };
+const STAGES = { reading: 'Reading the files into memory', text_model: 'Loading the model weights', spec_model: 'Loading the draft model', mmproj_model: 'Loading the vision projector' };
 
 /** The parts of a meta line, kept apart by the system's dots. */
 const parts = (list) => `<span class="ds-parts"><span class="ds-parts__list">${list.filter(Boolean).map((p) => `<span>${p}</span>`).join('')}</span></span>`;
@@ -74,9 +74,9 @@ function liveHtml(d, s) {
   let body = '';
   if (engineBusy(e)) {
     const known = e.progress != null;
-    const stage = e.state === 'loading' && STAGES[e.stage] ? `Loading the ${STAGES[e.stage]}` : e.message;
+    const stage = e.state === 'loading' && STAGES[e.stage] ? STAGES[e.stage] : e.state === 'planning' ? 'Planning where the weights go' : 'Starting llama-server';
     body = progressHtml(e.progress || 0, 'Engine start', `${e.message}${known ? ` · ${pct(e.progress)}` : ''}`,
-      `${stage} · for ${span(Date.now() - e.since)}`, !known);
+      `${stage && !e.message.toLowerCase().includes(stage.split(' ').pop()) ? `${stage} · ` : ''}for ${span(Date.now() - e.since)}`, !known);
   } else if (e.state === 'error' || e.state === 'crashed') {
     body = alertHtml('error', e.state === 'crashed' ? 'The engine crashed' : 'The engine could not start', esc(e.error || e.message),
       '<button class="ds-btn ds-btn--text ds-sm" type="button" data-act="engine-log">Engine log</button>');

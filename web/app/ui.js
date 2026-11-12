@@ -260,10 +260,12 @@ export function engineState(engine) {
   switch (e.state) {
     case 'ready':
       return ['ok', 'Ready', 'check'];
-    case 'loading':
-      return ['running', e.progress != null ? `Loading ${pct(e.progress)}` : 'Loading'];
+    case 'loading': {
+      const word = e.stage === 'reading' ? 'Reading' : 'Loading';
+      return ['running', e.progress != null ? `${word} ${pct(e.progress)}` : word];
+    }
     case 'planning':
-      return ['running', 'Planning'];
+      return ['running', e.progress != null ? `Planning ${pct(e.progress)}` : 'Planning'];
     case 'starting':
       return ['running', 'Starting'];
     case 'error':

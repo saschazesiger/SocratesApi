@@ -8,6 +8,7 @@
  *
  *   node scripts/mock-server.mjs            http://localhost:8090
  *   PORT=9000 node scripts/mock-server.mjs
+ *   UPSTREAM=http://host:8080 node scripts/mock-server.mjs   this interface on a real server's /api
  *
  * The machine it pretends to be: an RTX 3090 (24 GB), 64 GB of RAM and a
  * 2 TB NVMe. State lives in memory; a restart starts at the first-start
@@ -49,7 +50,7 @@ const models = [
     files: [{ path: 'Huihui-Qwen3.8-27B-abliterated.UD-Q4_K_XL.gguf', size: 17363000000 }],
     mmproj: 'mmproj-model-bf16.gguf', mmprojSize: 930000000, size: 18293000000,
     state: 'ready', error: '', progress: 1, active: true,
-    meta: { arch: 'qwen35', params: 27800000000, ctxTrain: 262144, layers: 65, experts: 0, expertsUsed: 0, moe: false, vision: true, mtp: true, chatTemplate: true },
+    meta: { arch: 'qwen35', params: 27800000000, ctxTrain: 262144, layers: 65, experts: 0, expertsUsed: 0, moe: false, vision: true, mtp: true, chatTemplate: true, embedding: false },
     settings: {},
     createdAt: now() - 9 * 86400e3,
     // Measured on the real RTX 3090: 15.5 GiB of layers, 1.84 GiB for the projector and the MTP head, 0.67 GiB of token embeddings in RAM.
@@ -64,10 +65,11 @@ const models = [
     ],
     mmproj: '', mmprojSize: 0, size: 83600000000,
     state: 'ready', error: '', progress: 1, active: false,
-    meta: { arch: 'qwen3moe', params: 235000000000, ctxTrain: 262144, layers: 36, experts: 128, expertsUsed: 8, moe: true, vision: false, mtp: false, chatTemplate: true },
+    meta: { arch: 'qwen3moe', params: 235000000000, ctxTrain: 262144, layers: 36, experts: 128, expertsUsed: 8, moe: true, vision: false, mtp: false, chatTemplate: true, embedding: false },
     settings: { context: 32768, kvType: 'q8_0' },
     createdAt: now() - 3 * 86400e3,
-    sim: { kvPerToken: 49152, promptTps: 210, genTps: 7.8, sharedShare: 0.075 },
+    // per_layer_token_embd: 27 GB of lookup tables that stay in the file and are read row by row.
+    sim: { kvPerToken: 49152, promptTps: 210, genTps: 7.8, sharedShare: 0.075, lookup: 27e9 },
   },
   {
     id: 'gemma-4-12b-it-q5-k-m', name: 'Gemma 4 12B it · Q5_K_M',
@@ -123,6 +125,9 @@ function planFor(m, raw) {
   const kvRam = kv - kvGpu;
   const ramCompute = 0.06 * GiB + (gpuLayers < L ? 0.3 * GiB : 0);
   const ramRoom = SYS.ram.total - SYS.ram.other - kvRam - ramCompute - 2.5 * GiB;
+  // Lookup tables (token embeddings) in RAM's share of the file are read by row on demand: not counted in RAM.
+  const lookup = Math.min(cpuWeights, m.sim.lookup || 0);
+  cpuWeights -= lookup;
   const resident = s.loadMode === 'mmap' ? Math.min(cpuWeights, ramRoom) : cpuWeights;
   const disk = Math.max(0, cpuWeights - resident);
   const gpuTotal = SYS.gpu.other + gpuWeights + mmproj + kvGpu + compute;
@@ -156,9 +161,9 @@ function planFor(m, raw) {
   const placement = {
     source: 'estimated', fileBytes: weights,
     layers: { total: L, gpu: gpuLayers, expertLayersOnCpu: cpuMoe, moe: m.meta.moe },
-    gpu: { weights: Math.round(gpuWeights + mmproj), kv: Math.round(kvGpu), compute: Math.round(compute) },
+    gpu: { weights: Math.round(gpuWeights), kv: Math.round(kvGpu), compute: Math.round(compute), extra: Math.round(mmproj) },
     ram: { weights: Math.round(cpuWeights), weightsResident: Math.round(resident), kv: Math.round(kvRam), compute: Math.round(ramCompute) },
-    disk: { weights: Math.round(disk) },
+    disk: { weights: Math.round(disk), lookup: Math.round(lookup) },
     notes,
   };
   return { ok, error, ctx, gpuLayers, cpuMoe, args: argsFor(m, s, ctx, gpuLayers, cpuMoe), placement, fits, summary,
@@ -227,7 +232,18 @@ async function startEngine(m, { restart = false } = {}) {
     `print_info: n_layer     = ${m.meta.layers}`,
     m.meta.moe ? `print_info: n_expert    = ${m.meta.experts}, n_expert_used = ${m.meta.expertsUsed}` : `print_info: model params = ${(m.meta.params / 1e9).toFixed(2)} B`,
   ]) log(line);
-  setEngine({ state: 'loading', message: 'Loading weights into memory', progress: 0, stage: 'text_model' });
+  // First the files are read from the NVMe into the page cache, then llama.cpp loads the tensors.
+  const fileBytes = m.files.reduce((a, f) => a + f.size, 0);
+  setEngine({ state: 'loading', message: 'Opening the model files', progress: 0, stage: 'reading' });
+  const readSteps = m.meta.moe ? 24 : 10;
+  for (let i = 1; i <= readSteps && alive(); i += 1) {
+    await sleep(350);
+    if (!alive()) return;
+    const done = (fileBytes * i) / readSteps;
+    setEngine({ progress: i / readSteps, message: `Reading the model from the NVMe · ${(done / 1e9).toFixed(1)} GB of ${(fileBytes / 1e9).toFixed(1)} GB · ${rand(1.0, 1.3).toFixed(1)} GB/s` });
+  }
+  if (!alive()) return;
+  setEngine({ message: 'Loading weights into memory', progress: 0, stage: 'text_model' });
   const steps = m.meta.moe ? 60 : 36;
   for (let i = 1; i <= steps && alive(); i += 1) {
     await sleep(m.meta.moe ? 420 : 300);
@@ -424,7 +440,11 @@ const settings = { hfToken: '', requireKey: true, modelsDir: '/data/models' };
 
 const hf = [
   { id: 'huihui-ai/Huihui-Qwen3.8-27B-abliterated-GGUF', downloads: 48210, likes: 312, gguf: true, pipeline: 'image-text-to-text', params: 27.8e9, license: 'apache-2.0', baseModel: 'Qwen/Qwen3.8-27B',
-    quants: [['Q2_K', 10.9], ['Q3_K_M', 13.4], ['Q4_K', 16.81], ['UD-Q4_K_XL', 17.36], ['Q5_K_M', 19.6], ['Q6_K', 22.8], ['Q8_0', 29.5], ['F16', 55.6]], file: 'Huihui-Qwen3.8-27B-abliterated.{q}.gguf',
+    quants: [['IQ1_S', 6.4], ['IQ1_M', 6.9], ['IQ2_XXS', 7.9], ['IQ2_XS', 8.6], ['IQ2_S', 9.0], ['IQ2_M', 9.7], ['Q2_K_S', 9.9], ['Q2_K', 10.9], ['UD-Q2_K_XL', 11.3],
+      ['IQ3_XXS', 11.0], ['IQ3_XS', 11.7], ['IQ3_S', 12.1], ['IQ3_M', 12.6], ['Q3_K_S', 12.2], ['Q3_K_M', 13.4], ['Q3_K_L', 14.5], ['UD-Q3_K_XL', 14.0],
+      ['IQ4_XS', 15.0], ['IQ4_NL', 15.8], ['Q4_0', 15.8], ['Q4_1', 17.4], ['Q4_K_S', 16.0], ['Q4_K', 16.81], ['Q4_K_M', 16.9], ['Q4_K_L', 17.6], ['UD-Q4_K_XL', 17.36],
+      ['Q5_0', 19.1], ['Q5_1', 20.8], ['Q5_K_S', 19.1], ['Q5_K_M', 19.6], ['Q5_K_L', 20.4], ['UD-Q5_K_XL', 20.0], ['Q6_K', 22.8], ['Q6_K_L', 23.4], ['UD-Q6_K_XL', 24.1],
+      ['Q8_0', 29.5], ['UD-Q8_K_XL', 32.6], ['BF16', 55.6], ['F16', 55.6], ['F32', 111.2], ['TQ1_0', 6.9], ['IQ4_KS_R4', 15.2]], file: 'Huihui-Qwen3.8-27B-abliterated.{q}.gguf',
     mmproj: [['mmproj-model-bf16.gguf', 0.93e9]] },
   { id: 'unsloth/Qwen3.8-Flash-Next-GGUF', downloads: 211904, likes: 1204, gguf: true, pipeline: 'text-generation', params: 235e9, license: 'apache-2.0', baseModel: 'Qwen/Qwen3.8-Flash-Next', moe: true,
     quants: [['UD-IQ1_S', 52.0], ['UD-IQ2_XXS', 64.3], ['UD-IQ3_XXS', 83.6], ['UD-Q4_K_XL', 134.1], ['Q8_0', 249.8]], file: '{q}/Qwen3.8-Flash-Next-{q}-0000{i}-of-0000{n}.gguf', split: 45 },
@@ -459,6 +479,12 @@ function fitOf(size, moe) {
   return ['no', 'Larger than the GPU, RAM and the free NVMe together'];
 }
 
+const BITS = { IQ1_S: 1.6, IQ1_M: 1.8, IQ2_XXS: 2.1, IQ2_XS: 2.3, IQ2_S: 2.5, IQ2_M: 2.7, Q2_K: 2.9, Q2_K_S: 2.8, Q2_K_XL: 3.0, IQ3_XXS: 3.1, IQ3_XS: 3.3,
+  IQ3_S: 3.4, IQ3_M: 3.6, Q3_K_S: 3.5, Q3_K_M: 3.9, Q3_K_L: 4.3, Q3_K_XL: 4.0, IQ4_XS: 4.3, IQ4_NL: 4.5, Q4_0: 4.5, Q4_1: 5.0, Q4_K_S: 4.6, Q4_K: 4.9, Q4_K_M: 4.9,
+  Q4_K_L: 5.2, Q4_K_XL: 5.0, Q5_0: 5.5, Q5_1: 6.0, Q5_K_S: 5.5, Q5_K: 5.7, Q5_K_M: 5.7, Q5_K_L: 6.0, Q5_K_XL: 5.9, Q6_K: 6.6, Q6_K_L: 6.8, Q6_K_XL: 6.9, Q8_0: 8.5,
+  Q8_K_XL: 9.0, BF16: 16, F16: 16, F32: 32 };
+const bitsOf = (q) => BITS[q.toUpperCase().replace(/^UD-/, '')] || 0;
+
 function repoDetails(entry) {
   const base = { id: entry.id, gated: !!entry.gated, license: entry.license, pipeline: entry.pipeline, params: entry.params, baseModel: entry.baseModel, gguf: entry.gguf };
   if (!entry.gguf) {
@@ -470,16 +496,17 @@ function repoDetails(entry) {
     const files = Array.from({ length: parts }, (_, i) => entry.file.replaceAll('{q}', q).replace('{i}', String(i + 1)).replace('{n}', String(parts)))
       .map((f) => (parts === 1 ? f.replace(/-00001-of-00001/, '') : f));
     const [fit, note] = fitOf(size, entry.moe);
-    return { quant: q, files, size, fit, note, recommended: false };
-  });
-  const order = ['gpu', 'hybrid', 'disk'];
-  for (const fit of order) {
-    const fitting = variants.filter((v) => v.fit === fit && !/^(F16|BF16)$/.test(v.quant));
-    if (fitting.length) {
-      fitting[fitting.length - 1].recommended = true;
-      break;
-    }
-  }
+    return { quant: q, files, size, bits: bitsOf(q), fit, note, recommended: false };
+  }).sort((a, b) => a.size - b.size);
+  // As the server: the largest that fits the GPU between 3.9 and 6.7 bits, else the largest hybrid between 2.9 and 5.
+  // Room for 32k of context and the projector next to it; the usual names first.
+  const roomy = (v) => v.fit !== 'gpu' || v.size + 6e9 <= SYS.gpu.total - SYS.gpu.other;
+  const pickFrom = (fit, lo, hi) => {
+    const ok = variants.filter((v) => v.fit === fit && v.bits >= lo && v.bits <= hi && roomy(v));
+    return ok.filter((v) => /(_K_M|_K_XL|Q6_K)$/.test(v.quant)).pop() || ok.pop();
+  };
+  const pick = pickFrom('gpu', 3.9, 6.7) || pickFrom('hybrid', 2.9, 5) || variants.find((v) => v.fit !== 'no' && v.bits > 0 && v.bits < 16);
+  if (pick) pick.recommended = true;
   return { ...base, variants, mmproj: (entry.mmproj || []).map(([file, size]) => ({ file, size })), quantized: [], convertible: false };
 }
 
@@ -644,7 +671,7 @@ function status() {
   let resident = 0;
   if (p && engine.state !== 'stopped') {
     const share = engine.state === 'ready' ? 1 : engine.state === 'loading' ? engine.progress : 0.02;
-    gpuUsed += (p.gpu.weights + p.gpu.kv + p.gpu.compute) * share;
+    gpuUsed += (p.gpu.weights + p.gpu.kv + p.gpu.compute + p.gpu.extra) * share;
     resident = p.ram.weightsResident * share;
     rss = resident + p.ram.kv + p.ram.compute + 0.4 * GiB;
   }
@@ -804,7 +831,7 @@ route('POST', '/api/models', async (req, res) => {
     mmproj: mm ? mm.file : '', mmprojSize: mm ? mm.size : 0, size: variant.size + (mm ? mm.size : 0),
     state: 'queued', error: '', progress: 0, active: false,
     meta: { arch: 'qwen3', params: entry.params, ctxTrain: 131072, layers: Math.round(clamp(entry.params / 0.45e9, 24, 94)), experts: entry.moe ? 128 : 0,
-      expertsUsed: entry.moe ? 8 : 0, moe: !!entry.moe, vision: !!mm, mtp: false, chatTemplate: true },
+      expertsUsed: entry.moe ? 8 : 0, moe: !!entry.moe, vision: !!mm, mtp: false, chatTemplate: entry.pipeline !== 'feature-extraction', embedding: entry.pipeline === 'feature-extraction' },
     settings: {}, createdAt: now(),
     sim: { kvPerToken: 40960, promptTps: 1800, genTps: 45, sharedShare: 0.08 },
     failAfter: entry.gated && !settings.hfToken ? 0.001 : 0,
@@ -998,9 +1025,33 @@ route('PUT', '/api/settings', async (req, res) => {
   json(res, 200, { hfToken: settings.hfToken ? 'set' : '', requireKey: settings.requireKey, modelsDir: settings.modelsDir });
 });
 
+/*
+ * UPSTREAM=http://host:8080 serves web/ from this checkout but sends /api/* to a real Socrates server: the interface
+ * as edited here, on real data (streams included).
+ */
+const UPSTREAM = process.env.UPSTREAM ? new URL(process.env.UPSTREAM) : null;
+
+function proxy(req, res) {
+  const upstream = http.request({
+    hostname: UPSTREAM.hostname, port: UPSTREAM.port || 80, path: req.url, method: req.method,
+    // The server checks that a request comes from its own origin: speak as that origin.
+    headers: { ...req.headers, host: UPSTREAM.host, ...(req.headers.origin ? { origin: UPSTREAM.origin } : {}), ...(req.headers.referer ? { referer: `${UPSTREAM.origin}/` } : {}) },
+  }, (answer) => {
+    res.writeHead(answer.statusCode, answer.headers);
+    answer.pipe(res);
+  });
+  upstream.on('error', () => {
+    if (!res.headersSent) fail(res, 502, `${UPSTREAM.host} does not answer.`);
+    else res.end();
+  });
+  res.on('close', () => upstream.destroy());
+  req.pipe(upstream);
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://x');
   if (!url.pathname.startsWith('/api/')) return serveFile(req, res);
+  if (UPSTREAM) return proxy(req, res);
   for (const r of routes) {
     if (r.method !== req.method) continue;
     const match = r.pattern.exec(url.pathname);

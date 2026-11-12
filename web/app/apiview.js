@@ -104,7 +104,7 @@ function endpoints(d) {
     ['GET', '/v1/models', 'Models', 'The model this server runs, in the OpenAI format. Clients use it to find the model id.',
       `curl ${base}/models ${auth}`],
     ['POST', '/v1/embeddings', 'Embeddings', 'Vectors for texts, for search and RAG. Works only while an embedding model is the active model.',
-      `curl ${base}/embeddings ${auth} \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${id}", "input": "The quick brown fox"}'`, 'Embedding models only'],
+      `curl ${base}/embeddings ${auth} \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${id}", "input": "The quick brown fox"}'`, embeddingModel(d) ? '' : 'needs an embedding model'],
     ['POST', '/v1/messages', 'Anthropic messages', 'Chat in the Anthropic Messages format with streaming, tools and thinking: for Claude Code and the Anthropic SDKs.',
       `curl ${base}/messages \\\n  -H "x-api-key: ${KEY}" -H "anthropic-version: 2023-06-01" \\\n  -H "Content-Type: application/json" \\\n  -d '{"model": "${id}", "max_tokens": 512, "messages": [{"role": "user", "content": "Hi"}]}'`],
     ['POST', '/v1/messages/count_tokens', 'Count tokens', 'Counts the tokens of an Anthropic request without running it.',
@@ -114,13 +114,25 @@ function endpoints(d) {
   ];
 }
 
+/** Whether the active model makes embeddings (meta.embedding of /api/models). */
+function embeddingModel(d) {
+  const id = ctx.status && ctx.status.engine.modelId;
+  const m = (d.models || []).find((x) => x.id === id);
+  return !!(m && m.meta && m.meta.embedding);
+}
+
 function endpointsHtml(d) {
-  return `<div class="ds-disclosure-list">${endpoints(d).map(([method, path, title, text, curl, tag], i) =>
-    `<details class="ds-collapsible ds-disclosure ds-disclosure--row" data-ds-key="ep-${i}">` +
-      `<summary><span class="ds-disclosure__title"><code>${method}</code> <code>${esc(path)}</code></span><span class="ds-disclosure__meta">${esc(title)}</span>${icon('chevronDown', 20, 'ds-chevron')}</summary>` +
-      `<div class="ds-disclosure__body ds-stack"><p>${esc(text)}${tag ? ` <span class="ds-tag ds-tone-neutral">${esc(tag)}</span>` : ''}</p>` +
+  return `<div class="ds-disclosure-list">${endpoints(d).map(([method, path, title, text, curl, missing], i) => {
+    // An endpoint the active model cannot serve stays listed, quiet, with the reason in words.
+    const wrap = (html) => (missing ? `<span class="ds-muted">${html}</span>` : html);
+    return `<details class="ds-collapsible ds-disclosure ds-disclosure--row" data-ds-key="ep-${i}">` +
+      `<summary><span class="ds-disclosure__title">${wrap(`<code>${method}</code> <code>${esc(path)}</code>`)}</span>` +
+      `<span class="ds-disclosure__meta">${missing ? `${icon('ban', 16)} ${esc(title)}: ${esc(missing)}` : esc(title)}</span>${icon('chevronDown', 20, 'ds-chevron')}</summary>` +
+      `<div class="ds-disclosure__body ds-stack"><p>${esc(text)}</p>` +
+      (missing ? alertHtml('', '', `Not available now: the active model is no embedding model. Activate one (for example nomic-embed) on the <a href="#/models">Models page</a>.`) : '') +
       `<div class="ds-field__row ds-field__row--top"><pre class="ds-code-block ds-code-block--wrap so-grow" id="ep-curl-${i}" tabindex="0" aria-label="Example: ${esc(path)}"><code>${esc(curl)}</code></pre>${copyButton(`ep-curl-${i}`, `the example of ${path}`)}</div>` +
-      '</div></details>').join('')}</div>`;
+      '</div></details>';
+  }).join('')}</div>`;
 }
 
 /* ── Keys ─────────────────────────────────────────────────────────── */
@@ -204,18 +216,20 @@ function quickHtml(d) {
 /* ── The view ─────────────────────────────────────────────────────── */
 
 let shownModel = null;
+let shownEmbedding = false;
 
 export default {
   title: 'API',
-  topics: ['keys', 'requests', 'settings'],
+  topics: ['keys', 'requests', 'settings', 'models'],
 
   async load() {
-    const [keys, requests, settings] = await Promise.all([api.get('/api/keys'), api.get('/api/requests'), api.get('/api/settings')]);
-    return { keys: keys.keys || [], baseUrl: keys.baseUrl, requests: requests.requests || [], settings };
+    const [keys, requests, settings, models] = await Promise.all([api.get('/api/keys'), api.get('/api/requests'), api.get('/api/settings'), api.get('/api/models')]);
+    return { keys: keys.keys || [], baseUrl: keys.baseUrl, requests: requests.requests || [], settings, models: models.models || [] };
   },
 
   html(d) {
     shownModel = ctx.status ? ctx.status.engine.modelId : '';
+    shownEmbedding = embeddingModel(d);
     return head('API', 'Use the active model from your apps, through an OpenAI- and an Anthropic-compatible API.') +
       '<div class="ds-grid-2">' +
         `<section class="ds-card" aria-labelledby="quick-title"><h2 class="ds-card__title" id="quick-title">Quick start</h2><div class="ds-stack" id="quick">${quickHtml(d)}</div></section>` +
@@ -247,6 +261,10 @@ export default {
   update(d) {
     const page = ctx.page;
     DS.dom.morphHtml($('#quick', page), quickHtml(d));
+    if (embeddingModel(d) !== shownEmbedding) {
+      shownEmbedding = embeddingModel(d);
+      DS.dom.morphHtml($('#endpoints', page), endpointsHtml(d));
+    }
     const keys = $('#keys', page);
     M.flip(keys, (morph) => DS.dom.morphHtml(keys, keysHtml(d), morph), { live: true });
     const requests = $('#requests', page);
@@ -261,6 +279,7 @@ export default {
     // The model's id is in the snippets and examples: draw them again when another model becomes active.
     if (!ctx.data || s.engine.modelId === shownModel) return;
     shownModel = s.engine.modelId;
+    shownEmbedding = embeddingModel(ctx.data);
     const page = ctx.page;
     DS.dom.morphHtml($('#quick', page), quickHtml(ctx.data));
     DS.dom.morphHtml($('#snippets', page), snippetsHtml(ctx.data));
