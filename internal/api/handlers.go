@@ -661,7 +661,7 @@ func (s *Server) hfRepo(w http.ResponseWriter, r *http.Request) {
 		mm = repo.MMProj[0].Size
 	}
 	ram := snap.RAM.Available + snap.RAM.EngineAnon
-	hf.Assess(repo.Variants, hf.Machine{VRAM: vram, RAM: ram, DiskFree: snap.Disk.Free}, mm)
+	hf.Assess(repo.Variants, hf.Machine{VRAM: vram, RAM: ram, DiskFree: snap.Disk.Free}, mm, repo.MoE)
 	if repo.Variants == nil {
 		repo.Variants = []hf.Variant{}
 	}

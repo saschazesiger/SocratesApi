@@ -52,7 +52,7 @@ func TestAssessRecommendsGPUQuant(t *testing.T) {
 		{Name: "M-Q6_K.gguf", Size: 22 << 30},
 		{Name: "M-Q8_0.gguf", Size: 28 << 30},
 	})
-	Assess(vs, Machine{VRAM: 24 << 30, RAM: 40 << 30, DiskFree: 1 << 40}, 0)
+	Assess(vs, Machine{VRAM: 24 << 30, RAM: 40 << 30, DiskFree: 1 << 40}, 0, false)
 	for _, v := range vs {
 		if v.Recommended && v.Quant != "Q4_K_M" {
 			t.Errorf("recommended %s", v.Quant)
@@ -92,5 +92,24 @@ func TestSharedEngramShard(t *testing.T) {
 	})
 	if len(vs) != 1 || len(vs[0].Files) != 4 || vs[0].Files[3] != "DS-Engram-IQ4_NL.gguf" {
 		t.Fatalf("got %+v", vs)
+	}
+}
+
+func TestAssessMoEPrefersQuality(t *testing.T) {
+	vs := groupVariants([]RepoFile{
+		{Name: "M-35B-A3B-Q2_K.gguf", Size: 13e9},
+		{Name: "M-35B-A3B-Q3_K.gguf", Size: 17e9},
+		{Name: "M-35B-A3B-Q4_K.gguf", Size: 21.7e9},
+		{Name: "M-35B-A3B-Q5_K.gguf", Size: 25.3e9},
+		{Name: "M-35B-A3B-Q8_0.gguf", Size: 37.8e9},
+	})
+	Assess(vs, Machine{VRAM: 24 << 30, RAM: 48 << 30, DiskFree: 1 << 40}, 9e8, true)
+	for _, v := range vs {
+		if v.Recommended && v.Quant != "Q4_K" {
+			t.Errorf("recommended %s", v.Quant)
+		}
+	}
+	if !activeRe.MatchString("huihui-ai/Huihui-Qwen3.6-35B-A3B-abliterated-MTP-GGUF") {
+		t.Error("A3B not recognised")
 	}
 }

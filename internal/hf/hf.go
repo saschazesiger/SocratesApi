@@ -179,6 +179,7 @@ type Repo struct {
 	MMProjFiles []MMProj   `json:"mmproj"`
 	Quantized   []Related  `json:"quantized"`
 	Convertible bool       `json:"convertible"`
+	MoE         bool       `json:"moe"`
 	Safetensors int64      `json:"safetensorsBytes"`
 	Files       []RepoFile `json:"-"`
 }
@@ -277,6 +278,7 @@ func (c *Client) Repo(ctx context.Context, id string) (*Repo, error) {
 	for _, f := range r.MMProj {
 		r.MMProjFiles = append(r.MMProjFiles, MMProj{File: f.Name, Size: f.Size})
 	}
+	r.MoE = strings.Contains(strings.ToLower(r.Arch), "moe") || hasTag(m.Tags, "moe") || activeRe.MatchString(r.ID)
 	r.GGUF = len(ggufs) > 0
 	r.Variants = groupVariants(ggufs)
 	r.Convertible = !r.GGUF && r.Safetensors > 0 && len(m.Config.Architectures) > 0
@@ -311,6 +313,8 @@ func (c *Client) quantized(ctx context.Context, id string) ([]Related, error) {
 	return out, nil
 }
 
+var activeRe = regexp.MustCompile(`(?i)-A\d+(\.\d+)?B(\b|-|_|$)`) // "35B-A3B": a MoE with 3B active
+
 var (
 	splitRe = regexp.MustCompile(`(?i)-(\d{5})-of-(\d{5})\.gguf$`)
 	quantRe = regexp.MustCompile(`(?i)(?:^|[-_.])((?:UD-)?(?:IQ\d_(?:XXS|XS|S|M|NL|K_S|K_M)|Q\d_K_XL|Q\d_K_[SML]|Q\d_K|Q\d_[01]|Q8_0|TQ\d_0|MXFP4(?:_MOE)?|NVFP4|BF16|F16|F32|GSQ-RCO-IQ\d_[A-Z]+))(?:[-_.]|$)`)
@@ -339,7 +343,7 @@ func bitsOf(q string) float64 {
 	table := map[string]float64{
 		"IQ1_S": 1.6, "IQ1_M": 1.8, "IQ2_XXS": 2.1, "IQ2_XS": 2.3, "IQ2_S": 2.5, "IQ2_M": 2.7, "Q2_K": 2.9, "Q2_K_S": 2.8, "Q2_K_XL": 3.0, "Q2_0": 2.5,
 		"IQ3_XXS": 3.1, "IQ3_XS": 3.3, "IQ3_S": 3.4, "IQ3_M": 3.6, "Q3_K_S": 3.5, "Q3_K_M": 3.9, "Q3_K_L": 4.3, "Q3_K_XL": 4.0,
-		"IQ4_XS": 4.3, "IQ4_NL": 4.5, "Q4_0": 4.5, "Q4_1": 5.0, "Q4_K_S": 4.6, "Q4_K": 4.9, "Q4_K_M": 4.9, "Q4_K_L": 5.2, "Q4_K_XL": 5.0, "MXFP4": 4.25, "MXFP4_MOE": 4.25,
+		"Q3_K": 3.9, "IQ4_XS": 4.3, "IQ4_NL": 4.5, "Q4_0": 4.5, "Q4_1": 5.0, "Q4_K_S": 4.6, "Q4_K": 4.9, "Q4_K_M": 4.9, "Q4_K_L": 5.2, "Q4_K_XL": 5.0, "MXFP4": 4.25, "MXFP4_MOE": 4.25,
 		"Q5_0": 5.5, "Q5_1": 6.0, "Q5_K_S": 5.5, "Q5_K": 5.7, "Q5_K_M": 5.7, "Q5_K_L": 6.0, "Q5_K_XL": 5.9,
 		"Q6_K": 6.6, "Q6_K_L": 6.8, "Q6_K_XL": 6.9, "Q8_0": 8.5, "Q8_K_XL": 9.0, "BF16": 16, "F16": 16, "F32": 32,
 	}
@@ -505,7 +509,7 @@ type Machine struct {
 const gib = 1 << 30
 
 // Assess marks every variant with where it would run and recommends one.
-func Assess(vs []Variant, m Machine, mmproj int64) {
+func Assess(vs []Variant, m Machine, mmproj int64, moe bool) {
 	best := -1
 	bestHybrid := -1
 	for i := range vs {
@@ -539,6 +543,13 @@ func Assess(vs []Variant, m Machine, mmproj int64) {
 		}
 		if v.Fit == "hybrid" && v.Bits >= 2.9 && v.Bits <= 5 {
 			bestHybrid = i // sorted by size: the largest that fits RAM
+		}
+		// A MoE model runs well with some experts in RAM: quality first, as
+		// long as most of it stays on the GPU.
+		if moe && (v.Fit == "gpu" || v.Fit == "hybrid") && v.Bits >= 3.9 && v.Bits <= 6.7 && size <= m.VRAM*3/2 {
+			if best < 0 || better(v, &vs[best]) {
+				best = i
+			}
 		}
 	}
 	if best < 0 {

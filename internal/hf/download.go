@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -50,7 +51,7 @@ type Downloader struct {
 
 	mu      sync.Mutex
 	queue   []Job
-	current *active
+	actives map[string]*active // by model id; at most Parallel at a time
 	cancels map[string]bool
 	wake    chan struct{}
 }
@@ -69,12 +70,22 @@ type active struct {
 
 // NewDownloader returns a downloader; start it with Run.
 func NewDownloader(c *Client) *Downloader {
-	return &Downloader{Client: c, cancels: map[string]bool{}, wake: make(chan struct{}, 1)}
+	return &Downloader{Client: c, cancels: map[string]bool{}, actives: map[string]*active{}, wake: make(chan struct{}, 1)}
 }
 
 // Add queues a job.
 func (d *Downloader) Add(j Job) {
 	d.mu.Lock()
+	if d.actives[j.ModelID] != nil {
+		d.mu.Unlock()
+		return
+	}
+	for _, q := range d.queue {
+		if q.ModelID == j.ModelID {
+			d.mu.Unlock()
+			return
+		}
+	}
 	delete(d.cancels, j.ModelID)
 	d.queue = append(d.queue, j)
 	d.mu.Unlock()
@@ -96,8 +107,8 @@ func (d *Downloader) Cancel(modelID string) {
 		}
 	}
 	d.queue = q
-	if d.current != nil && d.current.job.ModelID == modelID {
-		d.current.cancel()
+	if a := d.actives[modelID]; a != nil {
+		a.cancel()
 	}
 }
 
@@ -106,7 +117,13 @@ func (d *Downloader) Progress() []Progress {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	out := []Progress{}
-	if a := d.current; a != nil {
+	ids := make([]string, 0, len(d.actives))
+	for id := range d.actives {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		a := d.actives[id]
 		done := a.done.Load()
 		now := time.Now()
 		if dt := now.Sub(a.lastAt).Seconds(); dt >= 1 {
@@ -143,7 +160,7 @@ func (d *Downloader) Run(ctx context.Context) {
 				return
 			case <-tick.C:
 				d.mu.Lock()
-				busy := d.current != nil
+				busy := len(d.actives) > 0
 				d.mu.Unlock()
 				if busy && d.Changed != nil {
 					d.Changed()
@@ -151,6 +168,19 @@ func (d *Downloader) Run(ctx context.Context) {
 			}
 		}
 	}()
+	// Two downloads at once, so one huge model does not hold up a small one.
+	var wg sync.WaitGroup
+	for w := 0; w < Parallel; w++ {
+		wg.Add(1)
+		go func() { defer wg.Done(); d.worker(ctx) }()
+	}
+	wg.Wait()
+}
+
+// Parallel is how many models download at the same time.
+const Parallel = 2
+
+func (d *Downloader) worker(ctx context.Context) {
 	for {
 		d.mu.Lock()
 		var job *Job
@@ -165,12 +195,13 @@ func (d *Downloader) Run(ctx context.Context) {
 			case <-ctx.Done():
 				return
 			case <-d.wake:
+			case <-time.After(2 * time.Second):
 			}
 			continue
 		}
 		err := d.run(ctx, *job)
 		d.mu.Lock()
-		d.current = nil
+		delete(d.actives, job.ModelID)
 		cancelled := d.cancels[job.ModelID]
 		delete(d.cancels, job.ModelID)
 		d.mu.Unlock()
@@ -202,7 +233,7 @@ func (d *Downloader) run(parent context.Context, j Job) error {
 		d.mu.Unlock()
 		return errors.New("cancelled")
 	}
-	d.current = a
+	d.actives[j.ModelID] = a
 	d.mu.Unlock()
 	var before int64
 	for i, f := range j.Files {
