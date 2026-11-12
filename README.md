@@ -80,7 +80,7 @@ The [quick start guide](docs/quick-start.md) walks through every click.
 **Live placement.** Where the model lives right now, measured from the running engine: weights, KV cache and
 compute buffers on the GPU, experts in RAM, and what is read from the NVMe.
 
-<img src="docs/images/models-moe.png" alt="Qwen3.8-Flash-Next, a 78 GB MoE model, on a 24 GB GPU: all 48 layers on the GPU, the experts of 31 layers in RAM, a lookup table read from the NVMe" width="800">
+<img src="docs/images/models-moe.png" alt="Qwen3.8-Flash-Next, a 78 GB MoE model, on a 24 GB GPU: all 36 layers on the GPU, the experts of 29 layers in RAM, a lookup table read from the NVMe" width="800">
 
 <table>
 <tr>
@@ -102,6 +102,8 @@ compute buffers on the GPU, experts in RAM, and what is read from the NVMe.
 &nbsp;&nbsp;
 <img src="docs/images/models-dark.png" alt="The Models page in the dark theme" width="400">
 </p>
+
+<sub>The screenshots come from the mock server (`scripts/mock-server.mjs`): the interface as it is, with simulated figures.</sub>
 
 ## 🧠 GPU · RAM · NVMe
 
