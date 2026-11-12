@@ -119,6 +119,7 @@ flowchart LR
 | Model on a 24 GB GPU + 64 GB RAM | Placement (automatic) | Measured |
 |---|---|---|
 | Huihui Qwen3.8 27B, UD-Q4_K_XL (17 GB) | all 65 layers on the GPU, 128k context, MTP | **~68 tok/s** writing, ~1 400 tok/s reading |
+| Huihui Qwen3.8 Flash-Next abliterated v2, UD-IQ4_XS (94 GB MoE) | experts of 37 layers (43 GB) in RAM, 29 GB lookup table on the NVMe | **~22 tok/s** writing, ~430 tok/s reading |
 | Qwen3.8-Flash-Next, UD-IQ3_XXS (78 GB MoE) | 48 layers on the GPU, experts of 31 layers (31 GB) in RAM, a 27 GB lookup table read from the NVMe | **~28 tok/s** writing |
 
 Dense models go to the GPU first; the context shrinks before weights leave it, but never below 32k. A MoE model

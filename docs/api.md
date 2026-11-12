@@ -65,7 +65,8 @@ export SOCRATES_API_KEY=sk-soc-...
 opencode
 ```
 
-`limit.context` lets opencode compact the conversation before it outgrows the model's context. Tested: opencode
+`limit.context` lets opencode compact the conversation before it outgrows the model's context. In scripts, close
+stdin for `opencode run` (`opencode run "…" < /dev/null`), otherwise it waits for input before sending anything. Tested: opencode
 1.19 writes and runs files with tool calls against Qwen3.8 27B.
 
 ## 🐍 OpenAI Python SDK

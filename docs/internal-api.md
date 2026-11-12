@@ -106,7 +106,7 @@ A **Model** as returned by the server:
 | `loadMode` | `mmap`,`mlock`,`ram` | mmap | how weights not on the GPU are held: mmap (page cache, can spill to NVMe), mlock (pinned in RAM), ram (copied into RAM) |
 | `parallel` | int | 1 | requests served at the same time (the context is shared) |
 | `threads` | int | 0 | CPU threads, 0 = automatic |
-| `batch`, `ubatch` | int | 2048, 512 | prompt batch sizes |
+| `batch`, `ubatch` | int | 2048, 512; 4096, 4096 for MoE models whose experts do not fit on the GPU | prompt batch sizes |
 | `speculative` | `off`,`mtp` | mtp if the model has MTP | multi-token prediction |
 | `vision` | bool | true if an mmproj exists | load the vision projector |
 | `reasoning` | `auto`,`on`,`off` | auto | thinking |
