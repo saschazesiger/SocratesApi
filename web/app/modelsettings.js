@@ -237,7 +237,7 @@ function planHtml(plan) {
     (plan.ok ? `<p>${esc(plan.summary)}</p>` : alertHtml('error', 'This does not fit', esc(plan.error || plan.summary))) +
     '<ul class="ds-kv-list">' +
       `<li><span>Context</span><strong>${num(plan.ctx)} tokens</strong></li>` +
-      `<li><span>Layers on the GPU</span><strong>${num(plan.gpuLayers)} of ${num(m.meta.layers)}</strong></li>` +
+      `<li><span>Layers on the GPU</span><strong>${num(plan.placement ? plan.placement.layers.gpu : Math.min(plan.gpuLayers, m.meta.layers))} of ${num(m.meta.layers)}</strong></li>` +
       (m.meta.moe ? `<li><span>Experts in RAM</span><strong>${plan.cpuMoe ? plural(plan.cpuMoe, 'layer') : 'none'}</strong></li>` : '') +
     '</ul>' +
     (plan.placement ? placementHtml(plan.placement, s.system, othersOf(s)) : '') +

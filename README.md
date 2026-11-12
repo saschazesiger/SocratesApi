@@ -23,6 +23,7 @@ Pick any model on Hugging Face, see exactly where it lives (GPU, RAM, NVMe) and 
 
 > **Status: first release, 0.1.0.** Tested end to end on an RTX 3090 (24 GB), 64 GB RAM and a 2 TB NVMe with
 > Huihui Qwen3.8 27B, Qwen3.8-Flash-Next (78 GB MoE), a model converted from safetensors, the chat and opencode.
+> DeepSeek-V4.1-Flash does not fit such a machine in a usable way (see [Memory](docs/memory.md#-measured-on-an-rtx-3090-64-gb-ram-nvme)).
 
 ## ✨ Why Socrates API?
 
@@ -71,8 +72,13 @@ The [quick start guide](docs/quick-start.md) walks through every click.
 
 ## 👀 See it
 
+**Every step of loading, live.** Planning, reading from the NVMe (GB and GB/s), copying to the GPU, ready: here a
+78 GB MoE model on a 24 GB GPU.
+
+<img src="docs/images/loading.gif" alt="Activating Qwen3.8-Flash-Next: the card goes from planning to reading the files from the NVMe to loading the weights and ready, while the GPU, RAM and NVMe bars fill" width="800">
+
 **Live placement.** Where the model lives right now, measured from the running engine: weights, KV cache and
-compute buffers on the GPU, experts in RAM, and what is still read from the NVMe.
+compute buffers on the GPU, experts in RAM, and what is read from the NVMe.
 
 <img src="docs/images/models-moe.png" alt="Qwen3.8-Flash-Next, a 78 GB MoE model, on a 24 GB GPU: all 48 layers on the GPU, the experts of 31 layers in RAM, a lookup table read from the NVMe" width="800">
 
@@ -113,7 +119,7 @@ flowchart LR
 | Model on a 24 GB GPU + 64 GB RAM | Placement (automatic) | Measured |
 |---|---|---|
 | Huihui Qwen3.8 27B, UD-Q4_K_XL (17 GB) | all 65 layers on the GPU, 128k context, MTP | **~68 tok/s** writing, ~1 400 tok/s reading |
-| Qwen3.8-Flash-Next, UD-IQ3_XXS (78 GB MoE) | 48 layers on the GPU, experts of 31 layers in RAM, a 27 GB lookup table on the NVMe | **18–24 tok/s** writing |
+| Qwen3.8-Flash-Next, UD-IQ3_XXS (78 GB MoE) | 48 layers on the GPU, experts of 31 layers (31 GB) in RAM, a 27 GB lookup table read from the NVMe | **~28 tok/s** writing |
 
 Dense models go to the GPU first; the context shrinks before weights leave it, but never below 32k. A MoE model
 keeps attention and the shared experts on the GPU and moves the routed experts of whole layers to RAM. Weights in

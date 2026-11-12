@@ -92,7 +92,7 @@ and also works while another model runs (it plans against the VRAM that model wo
 | Model | File | Placement | Writing | Reading the prompt |
 |---|---|---|---|---|
 | Huihui Qwen3.8 27B UD-Q4_K_XL | 17.4 GB | all on the GPU, 128k context, MTP | ~68 tok/s | ~1 400 tok/s (34k prompt) |
-| Qwen3.8-Flash-Next UD-IQ3_XXS | 77.9 GB | experts of 31 of 48 layers in RAM | 18–24 tok/s | slower, CPU-bound |
+| Qwen3.8-Flash-Next UD-IQ3_XXS | 77.9 GB | experts of 31 of 48 layers in RAM (31 GB), 27 GB lookup table on the NVMe | ~28 tok/s | ~26 tok/s (short prompts, CPU-bound) |
 | Qwen3-0.6B, converted, Q4_K_M | 0.5 GB | all on the GPU | ~470 tok/s | |
 
 > ⚠️ **DeepSeek-V4.1-Flash** (smallest GGUF 233 GB, ~120 GB needed in memory) does not fit a 24 GB + 64 GB

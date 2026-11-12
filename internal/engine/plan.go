@@ -278,6 +278,7 @@ func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, ra
 	plan.Args = p.resolved(paths, s, m, plan)
 	plan.Placement = pl
 	plan.Fits, plan.Summary, plan.Speed = verdict(pl, m, sys)
+	estimateResidency(pl, sys)
 	switch {
 	case s.LoadMode == "mlock" && plan.Fits == "disk":
 		pl.Notes = append(pl.Notes, "mlock pins the weights in RAM, but they do not fit: loading will fail. Use mmap, so the rest is read from the NVMe.")
@@ -438,6 +439,15 @@ func fmtGB(b int64) string {
 		return fmt.Sprintf("%.0f GB", v)
 	}
 	return fmt.Sprintf("%.1f GB", v)
+}
+
+// estimateResidency fills in, for a plan, how much of the RAM weights will
+// be in RAM: all of them if they fit into the free RAM (minus 4 GB), the
+// rest is read from the NVMe.
+func estimateResidency(pl *Placement, sys System) {
+	room := max64(sys.RAMAvailable-pl.RAM.KV-pl.RAM.Compute-4*gb, 0)
+	pl.RAM.WeightsResident = min64(pl.RAM.Weights, room)
+	pl.Disk.Weights = pl.RAM.Weights - pl.RAM.WeightsResident
 }
 
 // verdict sums a placement up for the person.
@@ -662,6 +672,7 @@ func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize in
 	plan.Args = p.resolved(paths, s, m, plan)
 	plan.Placement = pl
 	plan.Fits, plan.Summary, plan.Speed = verdict(pl, m, sys)
+	estimateResidency(pl, sys)
 	if plan.Fits == "disk" {
 		pl.Notes = append(pl.Notes, "Close other programs that use RAM, choose a smaller quantisation, or a shorter context, to keep more of it in RAM.")
 	}
