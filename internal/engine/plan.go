@@ -487,6 +487,15 @@ func lastLine(s string) string {
 // explainLlamaError turns the last lines of a llama.cpp failure into a
 // sentence a person can act on.
 func explainLlamaError(out string) string {
+	if s := knownLlamaError(out); s != "" {
+		return s
+	}
+	return lastLine(out)
+}
+
+// knownLlamaError is explainLlamaError without the fallback: "" when the
+// output says nothing specific.
+func knownLlamaError(out string) string {
 	low := strings.ToLower(out)
 	switch {
 	case strings.Contains(low, "unknown model architecture"):
@@ -506,7 +515,7 @@ func explainLlamaError(out string) string {
 			return strings.TrimSpace(l)
 		}
 	}
-	return lastLine(out)
+	return ""
 }
 
 // MakeVirtual plans like Make, but against a VRAM budget instead of what is

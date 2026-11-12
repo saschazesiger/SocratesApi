@@ -543,9 +543,12 @@ func (e *Engine) runModel(ctx context.Context, m store.Model) {
 		e.mu.Lock()
 		e.pid = 0
 		e.mu.Unlock()
-		reason := explainLlamaError(strings.Join(tail.lines(), "\n"))
-		if err == nil {
-			reason = "llama-server exited: " + reason
+		reason := knownLlamaError(strings.Join(tail.lines(), "\n"))
+		if reason == "" {
+			reason = "llama-server stopped unexpectedly (" + exitText(err) + ")"
+			if strings.Contains(exitText(err), "killed") {
+				reason += "; if nobody stopped it, the system may have run out of RAM"
+			}
 		}
 		e.set(func(st *Status) {
 			st.State = Crashed
