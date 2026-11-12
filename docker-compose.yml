@@ -1,0 +1,19 @@
+services:
+  socrates:
+    image: ghcr.io/saschazesiger/socrates-api:latest
+    container_name: socrates
+    restart: unless-stopped
+    ports:
+      - "8080:8080"   # web interface and API on your local network; keep it off the internet
+    volumes:
+      - socrates:/data
+    devices:
+      - nvidia.com/gpu=all   # needs the NVIDIA Container Toolkit (CDI); see docs/quick-start.md
+    ulimits:
+      memlock: -1            # lets the "mlock" load mode pin weights in RAM
+    cap_add:
+      - IPC_LOCK
+    shm_size: 1g
+
+volumes:
+  socrates:
