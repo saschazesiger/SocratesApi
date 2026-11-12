@@ -36,7 +36,8 @@ function snippets(d) {
           npm: '@ai-sdk/openai-compatible',
           name: 'Socrates API',
           options: { baseURL: base, apiKey: '{env:SOCRATES_API_KEY}' },
-          models: { [id]: { name } },
+          // opencode compacts the conversation before it outgrows the context.
+          models: { [id]: { name, limit: { context: e.ctx || 32768, output: Math.min(32768, Math.floor((e.ctx || 32768) / 2)) } } },
         },
       },
       model: `socrates/${id}`,
@@ -61,7 +62,7 @@ for chunk in stream:
     "messages": [{"role": "user", "content": "Hello! Who are you?"}],
     "stream": true
   }'`],
-    ['claude', 'Claude Code', 'sh', `# The Anthropic Messages API of Socrates, for Claude Code and other Anthropic clients
+    ['claude', 'Anthropic', 'sh', `# The Anthropic Messages API of Socrates, for Claude Code and other Anthropic clients
 export ANTHROPIC_BASE_URL="${origin(base)}"
 export ANTHROPIC_AUTH_TOKEN="$SOCRATES_API_KEY"
 export ANTHROPIC_MODEL="${id}"

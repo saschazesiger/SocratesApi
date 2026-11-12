@@ -42,7 +42,7 @@ export function othersOf(status) {
   let engineAnon = 0;
   if (running) {
     const loaded = status.engine.state === 'ready' ? 1 : status.engine.state === 'loading' ? status.engine.progress || 0 : 0;
-    engineGpu = (p.gpu.weights + p.gpu.kv + p.gpu.compute) * loaded;
+    engineGpu = (p.gpu.weights + p.gpu.kv + p.gpu.compute + (p.gpu.extra || 0)) * loaded;
     engineAnon = Math.max(0, (sys.ram.engineRss || 0) - (p.ram.weightsResident || 0));
   }
   return {
@@ -62,7 +62,8 @@ export function placementHtml(placement, system, others, { live = false } = {}) 
   const L = p.layers || { total: 0, gpu: 0, expertLayersOnCpu: 0, moe: false };
 
   if (gpu) {
-    const engine = p.gpu.weights + p.gpu.kv + p.gpu.compute;
+    const extra = p.gpu.extra || 0;
+    const engine = p.gpu.weights + p.gpu.kv + p.gpu.compute + extra;
     const other = others.gpu;
     const used = engine + other;
     const free = Math.max(0, gpu.total - used);
@@ -81,7 +82,8 @@ export function placementHtml(placement, system, others, { live = false } = {}) 
         { id: 'w', label: 'Weights', value: p.gpu.weights, s: 1, always: true },
         { id: 'kv', label: 'KV cache', value: p.gpu.kv, s: 2 },
         { id: 'c', label: 'Compute', value: p.gpu.compute, s: 3 },
-        { id: 'o', label: 'Other programs', value: other, s: 'n' },
+        { id: 'x', label: 'Vision & MTP', value: extra, s: 4 },
+        { id: 'o', label: 'CUDA & other programs', value: other, s: 'n' },
       ],
       note: `${icon('layers', 16)}${esc(layerText)}${esc(liveText)}`,
     }));

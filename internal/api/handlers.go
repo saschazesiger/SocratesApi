@@ -228,6 +228,7 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		mmproj = f.Name
+		files = append(files, store.File{Path: f.Name, Size: f.Size, SHA256: f.SHA256, Kind: "mmproj"})
 		jobFiles = append(jobFiles, f)
 		total += f.Size
 	}
@@ -258,10 +259,12 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 // jobOf rebuilds the download job of a model from its row.
 func (s *Server) jobOf(m store.Model) hf.Job {
 	j := hf.Job{ModelID: m.ID, Repo: m.Repo, Revision: m.Revision, Dir: s.d.Engine.ModelDir(m.ID)}
+	haveMM := false
 	for _, f := range m.Files {
 		j.Files = append(j.Files, hf.RepoFile{Name: f.Path, Size: f.Size, SHA256: f.SHA256})
+		haveMM = haveMM || f.Kind == "mmproj"
 	}
-	if m.MMProj != "" {
+	if m.MMProj != "" && !haveMM {
 		j.Files = append(j.Files, hf.RepoFile{Name: m.MMProj})
 	}
 	return j
@@ -597,9 +600,6 @@ func (s *Server) hfRepo(w http.ResponseWriter, r *http.Request) {
 	hf.Assess(repo.Variants, hf.Machine{VRAM: vram, RAM: ram, DiskFree: snap.Disk.Free}, mm)
 	if repo.Variants == nil {
 		repo.Variants = []hf.Variant{}
-	}
-	if repo.MMProj == nil {
-		repo.MMProj = []hf.RepoFile{}
 	}
 	if repo.Quantized == nil {
 		repo.Quantized = []hf.Related{}

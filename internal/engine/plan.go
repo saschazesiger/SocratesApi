@@ -274,7 +274,6 @@ func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, ra
 	plan.Args = p.resolved(paths, s, m, plan)
 	plan.Placement = pl
 	plan.Fits, plan.Summary, plan.Speed = verdict(pl, m, sys)
-	pl.Notes = append(pl.Notes, plan.Summary)
 	switch {
 	case s.LoadMode == "mlock" && plan.Fits == "disk":
 		pl.Notes = append(pl.Notes, "mlock pins the weights in RAM, but they do not fit: loading will fail. Use mmap, so the rest is read from the NVMe.")
@@ -493,4 +492,155 @@ func explainLlamaError(out string) string {
 		}
 	}
 	return lastLine(out)
+}
+
+// MakeVirtual plans like Make, but against a VRAM budget instead of what is
+// free right now: for a preview while the engine itself holds the GPU.
+// llama.cpp measures the buffers of one configuration (--fit-print does
+// not look at free memory); the search over context, experts and layers
+// is done here with the exact tensor sizes of the file, then the chosen
+// configuration is measured again.
+func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize int64, raw Settings, f *gguf.File, m Meta, sys System, freeVRAM int64) Plan {
+	start := time.Now()
+	s := raw.withDefaults(m)
+	plan := Plan{}
+	budget := freeVRAM - int64(s.GPUReserveMB)<<20 - extraVRAM(s, m, mmprojSize)
+
+	measure := func(pl Plan) (gpuModel, gpuCtx, gpuCompute int64, ok bool) {
+		args := append([]string{"fit-params", "--fit-print", "on"}, p.resolved(paths, s, m, pl)...)
+		out, err := p.run(ctx, args)
+		if err != nil {
+			plan.Error = err.Error()
+			return 0, 0, 0, false
+		}
+		for _, d := range parseFitPrint(out) {
+			if d.name != "Host" {
+				gpuModel += d.model
+				gpuCtx += d.ctx
+				gpuCompute += d.compute
+			}
+		}
+		return gpuModel, gpuCtx, gpuCompute, true
+	}
+
+	// Per layer: the bytes of its experts and of everything else.
+	n := m.Layers
+	expert := make([]int64, n+1)
+	dense := make([]int64, n+1)
+	for _, t := range f.Tensors {
+		l := t.Layer()
+		if l < 0 || l >= n {
+			continue
+		}
+		if t.IsExpert() {
+			expert[l] += t.Size
+		} else {
+			dense[l] += t.Size
+		}
+	}
+
+	baseCtx := s.Context
+	if baseCtx == 0 {
+		baseCtx = minCtx(m)
+	}
+	all := Plan{Ctx: baseCtx, GPULayers: n + 1}
+	gModel, gCtx, gCompute, ok := measure(all)
+	if !ok {
+		return plan
+	}
+	kvPerToken := float64(gCtx) / float64(baseCtx)
+	ctxTokens := baseCtx
+	choice := all
+	switch need := gModel + gCtx + gCompute; {
+	case need <= budget:
+		if s.Context == 0 {
+			// Automatic context: as much as the rest of the budget holds.
+			c := int(float64(budget-gModel-gCompute) / kvPerToken)
+			c = c / 256 * 256
+			if lim := int(m.CtxTrain); lim > 0 && c > lim {
+				c = lim
+			}
+			ctxTokens = min(max(c, baseCtx), maxAutoCtx)
+			choice.Ctx = ctxTokens
+		}
+	default:
+		kv := int64(kvPerToken * float64(ctxTokens))
+		weights := gModel
+		cpuMoe := 0
+		if m.MoE && !s.CPUMoE.Set {
+			for cpuMoe < n && weights+kv+gCompute > budget {
+				weights -= expert[cpuMoe]
+				cpuMoe++
+			}
+			choice.CPUMoE = cpuMoe
+		}
+		if s.CPUMoE.Set {
+			choice.CPUMoE = s.CPUMoE.Value
+		}
+		layers := n + 1
+		if !s.GPULayers.Set {
+			// Still too large: whole layers leave the GPU, from the first one;
+			// their share of the KV cache goes with them.
+			first := 0
+			for first < n && weights+kv+gCompute > budget {
+				w := dense[first]
+				if first >= cpuMoe {
+					w += expert[first]
+				}
+				weights -= w
+				kv -= int64(float64(kv) / float64(n-first))
+				first++
+			}
+			if first > 0 {
+				layers = n - first
+			}
+		} else {
+			layers = s.GPULayers.Value
+		}
+		choice.GPULayers = layers
+	}
+	if s.GPULayers.Set {
+		choice.GPULayers = s.GPULayers.Value
+	}
+	if choice.CPUMoE > 0 {
+		var parts []string
+		for i := 0; i < choice.CPUMoE; i++ {
+			parts = append(parts, strconv.Itoa(i))
+		}
+		choice.Overrides = `blk\.(` + strings.Join(parts, "|") + `)\.ffn_(up|down|gate|gate_up)_(ch|)exps=CPU`
+	}
+	plan.Ctx, plan.GPULayers, plan.CPUMoE, plan.Overrides = choice.Ctx, choice.GPULayers, choice.CPUMoE, choice.Overrides
+
+	printArgs := append([]string{"fit-params", "--fit-print", "on"}, p.resolved(paths, s, m, plan)...)
+	pout, err := p.run(ctx, printArgs)
+	if err != nil {
+		plan.Error = err.Error()
+		return plan
+	}
+	pl := placeTensors(f, m, plan)
+	pl.Source = "estimated"
+	pl.loadMode = s.LoadMode
+	for _, d := range parseFitPrint(pout) {
+		if d.name == "Host" {
+			pl.RAM.KV, pl.RAM.Compute = d.ctx, d.compute
+			if d.model > 0 {
+				pl.RAM.Weights = d.model
+			}
+		} else {
+			pl.GPU.Weights += d.model
+			pl.GPU.KV += d.ctx
+			pl.GPU.Compute += d.compute
+		}
+	}
+	pl.GPU.Extra = extraVRAM(s, m, mmprojSize)
+	plan.Args = p.resolved(paths, s, m, plan)
+	plan.Placement = pl
+	plan.Fits, plan.Summary, plan.Speed = verdict(pl, m, sys)
+	if plan.Fits == "disk" {
+		pl.Notes = append(pl.Notes, "Close other programs that use RAM, choose a smaller quantisation, or a shorter context, to keep more of it in RAM.")
+	}
+	pl.Notes = append(pl.Notes, "Planned against the VRAM that is free once the running model is unloaded.")
+	plan.OK = true
+	plan.TookMs = time.Since(start).Milliseconds()
+	return plan
 }

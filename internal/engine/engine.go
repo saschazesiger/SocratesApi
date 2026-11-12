@@ -235,7 +235,24 @@ func (e *Engine) Plan(ctx context.Context, m store.Model, s Settings) (Plan, err
 	if err != nil {
 		return Plan{}, fmt.Errorf("the model file cannot be read: %v", err)
 	}
-	return e.planner.Make(ctx, paths, fileSize(mmproj), s, f, meta, e.systemFor(m.ID)), nil
+	sys := e.systemFor(m.ID)
+	if held := e.engineVRAM(); held > 0 {
+		// The running engine holds the GPU; the model would replace it.
+		return e.planner.MakeVirtual(ctx, paths, fileSize(mmproj), s, f, meta, sys, sys.GPUFree+held), nil
+	}
+	return e.planner.Make(ctx, paths, fileSize(mmproj), s, f, meta, sys), nil
+}
+
+// engineVRAM is what the running llama-server holds on the GPU, with its
+// CUDA context; 0 when nothing runs.
+func (e *Engine) engineVRAM() int64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.pid == 0 || e.placement == nil {
+		return 0
+	}
+	g := e.placement.GPU
+	return g.Weights + g.KV + g.Compute + g.Extra + 400<<20
 }
 
 // ModelMeta reads a model's metadata from its files.
@@ -268,7 +285,9 @@ func (e *Engine) files(m store.Model) ([]string, string) {
 	dir := filepath.Join(e.cfg.ModelsDir, m.ID)
 	var paths []string
 	for _, f := range m.Files {
-		paths = append(paths, filepath.Join(dir, f.Path))
+		if f.Kind == "" {
+			paths = append(paths, filepath.Join(dir, f.Path))
+		}
 	}
 	mm := ""
 	if m.MMProj != "" {

@@ -122,6 +122,7 @@ type File struct {
 	Path   string `json:"path"`
 	SHA256 string `json:"sha256,omitempty"`
 	Size   int64  `json:"size"`
+	Kind   string `json:"kind,omitempty"` // "" for the model, "mmproj" for the vision projector
 }
 
 // Model is a model the user added.

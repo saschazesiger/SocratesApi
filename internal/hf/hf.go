@@ -152,6 +152,12 @@ type Variant struct {
 	Recommended bool       `json:"recommended"`
 }
 
+// MMProj is a vision projector file of a repository.
+type MMProj struct {
+	File string `json:"file"`
+	Size int64  `json:"size"`
+}
+
 // Related is another repository: a GGUF version of this model.
 type Related struct {
 	ID        string `json:"id"`
@@ -169,7 +175,8 @@ type Repo struct {
 	Arch        string     `json:"arch"`
 	GGUF        bool       `json:"gguf"`
 	Variants    []Variant  `json:"variants"`
-	MMProj      []RepoFile `json:"mmproj"`
+	MMProj      []RepoFile `json:"-"`
+	MMProjFiles []MMProj   `json:"mmproj"`
 	Quantized   []Related  `json:"quantized"`
 	Convertible bool       `json:"convertible"`
 	Safetensors int64      `json:"safetensorsBytes"`
@@ -265,6 +272,10 @@ func (c *Client) Repo(ctx context.Context, id string) (*Repo, error) {
 				ggufs = append(ggufs, f)
 			}
 		}
+	}
+	r.MMProjFiles = []MMProj{}
+	for _, f := range r.MMProj {
+		r.MMProjFiles = append(r.MMProjFiles, MMProj{File: f.Name, Size: f.Size})
 	}
 	r.GGUF = len(ggufs) > 0
 	r.Variants = groupVariants(ggufs)
