@@ -76,3 +76,28 @@ func TestSettings(t *testing.T) {
 		t.Fatalf("got %q %v", args, err)
 	}
 }
+
+// Qwen3.8 27B at 256k with a q8_0 cache: the MTP layer's KV cache and the
+// f16 copy flash attention makes of one layer were missing from the plan.
+func TestExtraVRAM(t *testing.T) {
+	on, off := true, false
+	m := Meta{MTP: true, KVDim: 4 * (256 + 256)}
+	s := Settings{KVType: "q8_0", FlashAttn: "auto", Speculative: "mtp", Vision: &off}
+	const ctx = 262144
+	mtpKV := int64(ctx) * 2048 * 34 / 32 // 544 MiB
+	f16 := int64(ctx) * 2048 * 2         // 1 GiB
+	if got, want := extraVRAM(s, m, 0, ctx), 600<<20+mtpKV+f16; got != want {
+		t.Errorf("q8_0: %d, want %d", got, want)
+	}
+	s.KVType, s.Speculative = "f16", "off"
+	if got := extraVRAM(s, m, 0, ctx); got != 0 {
+		t.Errorf("f16 without MTP: %d, want 0", got)
+	}
+	s.Vision = &on
+	if got, want := extraVRAM(s, m, 1000, ctx), int64(1000+400<<20); got != want {
+		t.Errorf("vision: %d, want %d", got, want)
+	}
+	if got := ctxBound(Settings{}, Meta{CtxTrain: 262144}); got != maxAutoCtx {
+		t.Errorf("automatic context bound %d, want %d", got, maxAutoCtx)
+	}
+}

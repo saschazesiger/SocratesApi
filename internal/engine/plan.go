@@ -26,6 +26,7 @@ type Meta struct {
 	ExpertBytes  int64  `json:"expertBytes"` // bytes of all routed-expert tensors
 	Vision       bool   `json:"vision"`      // an mmproj is there
 	MTP          bool   `json:"mtp"`         // multi-token prediction layers are in the file
+	KVDim        int64  `json:"kvDim"`       // K plus V values per token of one attention layer
 	ChatTemplate bool   `json:"chatTemplate"`
 	Embedding    bool   `json:"embedding"`
 	FileType     string `json:"fileType"`
@@ -49,6 +50,20 @@ func ReadMeta(paths []string, hasMMProj bool) (Meta, *gguf.File, error) {
 		Embedding:   f.Has(f.Arch()+".pooling_type") && !f.Has("tokenizer.chat_template"),
 	}
 	m.ChatTemplate = f.Has("tokenizer.chat_template")
+	if heads := f.Uint(".attention.head_count"); heads > 0 {
+		k, v := f.Uint(".attention.key_length"), f.Uint(".attention.value_length")
+		if k == 0 {
+			k = f.Uint(".embedding_length") / heads
+		}
+		if v == 0 {
+			v = k
+		}
+		kvHeads := f.Uint(".attention.head_count_kv")
+		if kvHeads == 0 {
+			kvHeads = heads
+		}
+		m.KVDim = int64(kvHeads * (k + v))
+	}
 	for _, t := range f.Tensors {
 		n := int64(1)
 		for _, d := range t.Dims {
@@ -196,16 +211,49 @@ func minCtx(m Meta) int {
 }
 
 // extraVRAM is what the fit of fit-params does not know about but the
-// server will allocate on the GPU: the vision projector and the MTP context.
-func extraVRAM(s Settings, m Meta, mmprojSize int64) int64 {
+// server will allocate on the GPU for a context of ctx tokens:
+//   - the vision projector and its compute buffer;
+//   - the MTP draft context, which has its own KV cache for the MTP layer;
+//   - with a quantised KV cache, flash attention converts K and V of one
+//     layer to f16 in a temporary buffer while it reads a prompt. It grows
+//     with the filled context (1 GB at 256k for Qwen3.8 27B) and crashed the
+//     engine with an out-of-memory error once a conversation got long.
+func extraVRAM(s Settings, m Meta, mmprojSize int64, ctx int) int64 {
 	var extra int64
 	if *s.Vision && mmprojSize > 0 {
 		extra += mmprojSize + 400<<20
 	}
 	if s.Speculative == "mtp" && m.MTP {
-		extra += 600 << 20
+		extra += 600<<20 + int64(ctx)*m.KVDim*kvBytes(s.KVType)/32
+	}
+	if s.KVType != "f16" && s.FlashAttn != "off" {
+		extra += int64(ctx) * m.KVDim * 2
 	}
 	return extra
+}
+
+// kvBytes is the size of 32 values of a KV cache type (one quantisation block).
+func kvBytes(t string) int64 {
+	switch t {
+	case "q8_0":
+		return 34
+	case "q4_0":
+		return 18
+	default:
+		return 64
+	}
+}
+
+// ctxBound is the largest context the plan can choose: the reserve for the
+// context-dependent extras is taken before the fit picks the context.
+func ctxBound(s Settings, m Meta) int {
+	if s.Context > 0 {
+		return s.Context
+	}
+	if m.CtxTrain > 0 && m.CtxTrain < maxAutoCtx {
+		return int(m.CtxTrain)
+	}
+	return maxAutoCtx
 }
 
 // Make computes the plan for a model. It takes a few seconds: llama.cpp
@@ -214,7 +262,7 @@ func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, ra
 	start := time.Now()
 	s := moeBatches(raw.withDefaults(m), raw, m, sys)
 	plan := Plan{}
-	reserve := int64(s.GPUReserveMB)<<20 + extraVRAM(s, m, mmprojSize)
+	reserve := int64(s.GPUReserveMB)<<20 + extraVRAM(s, m, mmprojSize, ctxBound(s, m))
 
 	fit := func(s Settings) ([]string, error) {
 		args := append([]string{"fit-params"}, baseArgs(paths, s, m)...)
@@ -283,7 +331,7 @@ func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, ra
 			pl.GPU.Compute += d.compute
 		}
 	}
-	pl.GPU.Extra = extraVRAM(s, m, mmprojSize)
+	pl.GPU.Extra = extraVRAM(s, m, mmprojSize, plan.Ctx)
 	if plan.CPUMoE == 0 {
 		plan.CPUMoE = pl.Layers.ExpertLayersOnCPU
 	}
@@ -552,13 +600,13 @@ func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize in
 	start := time.Now()
 	s := moeBatches(raw.withDefaults(m), raw, m, sys)
 	plan := Plan{}
-	budget := freeVRAM - int64(s.GPUReserveMB)<<20 - extraVRAM(s, m, mmprojSize)
+	budget := freeVRAM - int64(s.GPUReserveMB)<<20 - extraVRAM(s, m, mmprojSize, ctxBound(s, m))
 
 	measure := func(pl Plan) (gpuModel, gpuCtx, gpuCompute int64, ok bool) {
 		args := append([]string{"fit-params", "--fit-print", "on"}, p.resolved(paths, s, m, pl)...)
 		out, err := p.run(ctx, args)
 		if err != nil {
-			plan.Error = err.Error()
+			plan.Error = virtualError(err)
 			return 0, 0, 0, false
 		}
 		for _, d := range parseFitPrint(out) {
@@ -662,7 +710,7 @@ func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize in
 	printArgs := append([]string{"fit-params", "--fit-print", "on"}, p.resolved(paths, s, m, plan)...)
 	pout, err := p.run(ctx, printArgs)
 	if err != nil {
-		plan.Error = err.Error()
+		plan.Error = virtualError(err)
 		return plan
 	}
 	pl := placeTensors(f, m, plan)
@@ -680,7 +728,7 @@ func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize in
 			pl.GPU.Compute += d.compute
 		}
 	}
-	pl.GPU.Extra = extraVRAM(s, m, mmprojSize)
+	pl.GPU.Extra = extraVRAM(s, m, mmprojSize, plan.Ctx)
 	plan.Args = p.resolved(paths, s, m, plan)
 	plan.Placement = pl
 	plan.Fits, plan.Summary, plan.Speed = verdict(pl, m, sys)
@@ -692,4 +740,13 @@ func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize in
 	plan.OK = true
 	plan.TookMs = time.Since(start).Milliseconds()
 	return plan
+}
+
+// virtualError explains a failed preview: the planner itself needs a few
+// hundred MB of VRAM, which a running model may not leave.
+func virtualError(err error) string {
+	if strings.Contains(err.Error(), "ran out of memory") {
+		return "the running model leaves no VRAM for llama.cpp's planner (it needs about 0.5 GB). Stop the model, then preview again."
+	}
+	return err.Error()
 }
