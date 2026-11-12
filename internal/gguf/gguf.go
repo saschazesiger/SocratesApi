@@ -173,7 +173,11 @@ func (r *reader) skipStr() {
 
 const maxKeptArray = 4096
 
-func (r *reader) value(typ uint32, keep bool) any {
+func (r *reader) value(typ uint32, keep bool) any { return r.valueAt(typ, keep, 0) }
+
+// valueAt reads one value; depth guards against arrays nested on purpose
+// to exhaust the stack.
+func (r *reader) valueAt(typ uint32, keep bool, depth int) any {
 	switch typ {
 	case 0:
 		return uint64(r.u8())
@@ -206,7 +210,11 @@ func (r *reader) value(typ uint32, keep bool) any {
 			out = make([]any, 0, n)
 		}
 		for i := uint64(0); i < n && r.err == nil; i++ {
-			v := r.value(et, keepItems)
+			if depth > 4 {
+				r.err = errors.New("arrays nested too deeply; not a valid GGUF file")
+				return nil
+			}
+			v := r.valueAt(et, keepItems, depth+1)
 			if keepItems {
 				out = append(out, v)
 			}

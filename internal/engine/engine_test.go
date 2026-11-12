@@ -39,9 +39,13 @@ func TestPlaceTensors(t *testing.T) {
 		add("blk."+l+".ffn_up_exps.weight", 20)
 	}
 	add("output.weight", 10)
+	add("per_layer_token_embd.weight", 2<<30)
 	m := Meta{Layers: 4, MoE: true}
 	// All layers on the GPU, the experts of layers 0 and 1 in RAM.
 	pl := placeTensors(f, m, Plan{GPULayers: 5, Overrides: `blk\.(0|1)\.ffn_(up|down|gate)_exps=CPU`})
+	if pl.Disk.Lookup != 2<<30 {
+		t.Fatalf("per-layer embeddings must be a lookup table, got %d", pl.Disk.Lookup)
+	}
 	if pl.RAM.Weights != 10+40 || pl.Layers.GPU != 4 || pl.Layers.ExpertLayersOnCPU != 2 {
 		t.Fatalf("got ram %d gpu layers %d expert layers %d", pl.RAM.Weights, pl.Layers.GPU, pl.Layers.ExpertLayersOnCPU)
 	}

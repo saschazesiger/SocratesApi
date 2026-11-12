@@ -191,9 +191,14 @@ func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	var body []byte
 	if r.Body != nil {
-		b, err := io.ReadAll(io.LimitReader(r.Body, 256<<20))
+		const maxBody = 256 << 20
+		b, err := io.ReadAll(io.LimitReader(r.Body, maxBody+1))
 		if err != nil {
 			apiError(w, http.StatusBadRequest, "invalid_request_error", "The request body could not be read.")
+			return
+		}
+		if len(b) > maxBody {
+			apiError(w, http.StatusRequestEntityTooLarge, "invalid_request_error", "The request is larger than 256 MB.")
 			return
 		}
 		body = b

@@ -152,6 +152,14 @@ func (a *auth) limited(ip string) time.Duration {
 	}
 	at.fails++
 	at.last = now
+	// Keep the map small: forget clients that went quiet.
+	if len(a.attempts) > 1000 {
+		for k, v := range a.attempts {
+			if now.Sub(v.last) > time.Hour && now.After(v.until) {
+				delete(a.attempts, k)
+			}
+		}
+	}
 	if at.fails >= 5 {
 		d := 30 * time.Second << (at.fails - 5)
 		if d > 15*time.Minute || d <= 0 {

@@ -211,6 +211,19 @@ func (s *Store) PutModel(m Model) error {
 	return err
 }
 
+// EditModel changes only the name and the settings, so it never undoes a
+// state change that happened meanwhile (a download that finished).
+func (s *Store) EditModel(id, name string, settings []byte) error {
+	res, err := s.db.Exec(`UPDATE models SET name = ?, settings = ?, updated_at = ? WHERE id = ?`, name, string(settings), Now(), id)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // SetModelState changes the state and error of a model.
 func (s *Store) SetModelState(id, state, errText string) error {
 	_, err := s.db.Exec(`UPDATE models SET state = ?, error = ?, updated_at = ? WHERE id = ?`, state, errText, Now(), id)

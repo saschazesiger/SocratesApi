@@ -133,6 +133,7 @@ func (e *Engine) Activate(id string) error {
 	}
 	e.mu.Lock()
 	e.status.Restarts = 0
+	e.restartReq = true // also when it is the active model already (after an error)
 	e.mu.Unlock()
 	e.kick()
 	return nil
@@ -347,6 +348,7 @@ func (e *Engine) Run(ctx context.Context) {
 		switch {
 		case active == "":
 			if cur != nil {
+				e.stopping()
 				e.stopRun(cur)
 			}
 			if state != Stopped {
@@ -359,6 +361,7 @@ func (e *Engine) Run(ctx context.Context) {
 			}
 		case cur == nil || cur.modelID != active || cur.settings != string(model.Settings) || restart:
 			if cur != nil {
+				e.stopping()
 				e.stopRun(cur)
 			}
 			if restart || cur == nil || cur.modelID != active || cur.settings != string(model.Settings) {
@@ -401,6 +404,11 @@ func (e *Engine) Run(ctx context.Context) {
 					e.startRun(ctx, model)
 				}
 			default:
+				// Running: after 10 healthy minutes, earlier crashes are forgotten.
+				if st := e.Status(); st.State == Ready && st.Restarts > 0 && st.UptimeMs > 10*60*1000 {
+					backoff = 0
+					e.set(func(s *Status) { s.Restarts = 0 })
+				}
 			}
 		}
 
@@ -417,6 +425,19 @@ func (e *Engine) Run(ctx context.Context) {
 		case <-tick.C:
 		}
 	}
+}
+
+// stopping marks the engine as not ready before the running server is
+// stopped, so requests wait for the next one instead of reaching it.
+func (e *Engine) stopping() {
+	e.set(func(s *Status) {
+		if s.State == Ready || s.State == Loading || s.State == Starting {
+			s.State = Starting
+			s.Message = "Stopping the running model"
+			s.Progress = nil
+			s.Since = store.Now()
+		}
+	})
 }
 
 func (e *Engine) set(fn func(s *Status)) {
@@ -593,6 +614,11 @@ func exitText(err error) string {
 func (e *Engine) fail(msg string) {
 	e.set(func(s *Status) {
 		s.State = Failed
+		if s.Restarts > 0 {
+			// While recovering from a crash, a failed start is retried too
+			// (the GPU may not have been free yet).
+			s.State = Crashed
+		}
 		s.Error = msg
 		s.Message = msg
 		s.Progress = nil

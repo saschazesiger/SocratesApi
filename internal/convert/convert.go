@@ -89,7 +89,10 @@ func New(cfg Config, st *store.Store, client *hf.Client) *Converter {
 		jb := c.jobs[j.ModelID]
 		c.mu.Unlock()
 		if jb != nil {
-			jb.dlDone <- err
+			select {
+			case jb.dlDone <- err:
+			default:
+			}
 		}
 	}
 	c.dl.Changed = func() { c.changed() }
@@ -115,7 +118,9 @@ func (c *Converter) Run(ctx context.Context) {
 			}
 			err := c.run(j)
 			c.mu.Lock()
-			delete(c.jobs, j.model.ID)
+			if c.jobs[j.model.ID] == j { // a retry may have replaced it
+				delete(c.jobs, j.model.ID)
+			}
 			c.mu.Unlock()
 			if errors.Is(j.ctx.Err(), context.Canceled) {
 				continue
@@ -157,6 +162,7 @@ func (c *Converter) Start(m store.Model, repo *hf.Repo) {
 	c.mu.Lock()
 	if old := c.jobs[m.ID]; old != nil {
 		old.cancel()
+		c.dl.Cancel(m.ID)
 	}
 	c.jobs[m.ID] = j
 	c.mu.Unlock()

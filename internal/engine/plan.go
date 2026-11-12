@@ -375,7 +375,9 @@ func placeTensors(f *gguf.File, m Meta, plan Plan) *Placement {
 		switch {
 		case layer >= 0:
 			onGPU = layer >= firstGPU && ngl > 0
-		case strings.HasPrefix(t.Name, "token_embd"):
+		case strings.Contains(t.Name, "token_embd"):
+			// Input embeddings (also per-layer ones) stay on the CPU: llama.cpp
+			// reads one row per token.
 			onGPU = false
 		default:
 			onGPU = ngl > n

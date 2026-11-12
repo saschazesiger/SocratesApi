@@ -378,7 +378,11 @@ func (s *Server) editModel(w http.ResponseWriter, r *http.Request) {
 		b, _ := json.Marshal(req.Settings)
 		m.Settings = b
 	}
-	if err := s.d.Store.PutModel(m); err != nil {
+	if err := s.d.Store.EditModel(m.ID, m.Name, m.Settings); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			writeError(w, 404, "This model does not exist (any more).")
+			return
+		}
 		s.fail(w, err)
 		return
 	}

@@ -125,7 +125,10 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	flusher.Flush()
 
 	c := s.hub.add()
-	c.wake <- struct{}{}
+	select { // the first status at once; a wake may be pending already
+	case c.wake <- struct{}{}:
+	default:
+	}
 	defer s.hub.remove(c)
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
@@ -142,6 +145,9 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-c.done:
 			return
 		case <-ping.C:
+			if !s.auth.check(r) {
+				return // signed out elsewhere (password changed)
+			}
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}

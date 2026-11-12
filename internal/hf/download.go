@@ -57,7 +57,7 @@ type Downloader struct {
 
 type active struct {
 	job       Job
-	fileIndex int
+	fileIndex atomic.Int32
 	done      atomic.Int64 // bytes of the model done
 	total     int64
 	state     atomic.Value
@@ -119,7 +119,7 @@ func (d *Downloader) Progress() []Progress {
 			a.lastBytes, a.lastAt = done, now
 		}
 		st, _ := a.state.Load().(string)
-		out = append(out, Progress{ModelID: a.job.ModelID, File: a.job.Files[a.fileIndex].Name, FileIndex: a.fileIndex,
+		out = append(out, Progress{ModelID: a.job.ModelID, File: a.job.Files[a.fileIndex.Load()].Name, FileIndex: int(a.fileIndex.Load()),
 			FileCount: len(a.job.Files), Done: done, Total: a.total, BytesPerSec: a.rate, State: st})
 	}
 	for _, j := range d.queue {
@@ -198,11 +198,15 @@ func (d *Downloader) run(parent context.Context, j Job) error {
 		a.total += f.Size
 	}
 	d.mu.Lock()
+	if d.cancels[j.ModelID] { // deleted while it was taken from the queue
+		d.mu.Unlock()
+		return errors.New("cancelled")
+	}
 	d.current = a
 	d.mu.Unlock()
 	var before int64
 	for i, f := range j.Files {
-		a.fileIndex = i
+		a.fileIndex.Store(int32(i))
 		a.state.Store("downloading")
 		if err := d.file(ctx, j, f, a, before); err != nil {
 			if ctx.Err() != nil && parent.Err() == nil {
@@ -400,7 +404,14 @@ func (d *Downloader) fileURL(j Job, name string) string {
 	return d.Client.Base + "/" + j.Repo + "/resolve/" + url.PathEscape(rev) + "/" + strings.Join(parts, "/")
 }
 
-var dlClient = &http.Client{Timeout: 0}
+// No overall timeout (files are large), but a server that accepts and then
+// says nothing is given up on.
+var dlClient = &http.Client{Transport: &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	ResponseHeaderTimeout: 60 * time.Second,
+	IdleConnTimeout:       90 * time.Second,
+	MaxIdleConnsPerHost:   connections * 2,
+}}
 
 func (d *Downloader) request(ctx context.Context, method, u string) (*http.Request, error) {
 	req, err := http.NewRequestWithContext(ctx, method, u, nil)
