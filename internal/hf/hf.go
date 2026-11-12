@@ -366,7 +366,7 @@ func groupVariants(files []RepoFile) []Variant {
 		base := path.Base(low)
 		// Patches, separate MTP drafts and tiny helper files are no models;
 		// the first part of a split model may be tiny, it holds the header.
-		if strings.Contains(low, "patch") || strings.HasPrefix(base, "mtp-") || strings.HasPrefix(low, "mtp/") ||
+		if strings.Contains(low, "patch") || strings.Contains(base, "imatrix") || strings.HasPrefix(base, "mtp-") || strings.HasPrefix(low, "mtp/") ||
 			(f.Size > 0 && f.Size < 50<<20 && !splitRe.MatchString(f.Name)) {
 			continue
 		}
@@ -398,6 +398,16 @@ func groupVariants(files []RepoFile) []Variant {
 		v.Bits = bitsOf(QuantOf(v.Files[0]))
 		v.Quant = label
 		out = append(out, *v)
+	}
+	// The same name in two folders (a re-upload): the folder tells them apart.
+	seen := map[string]int{}
+	for _, v := range out {
+		seen[v.Quant]++
+	}
+	for i := range out {
+		if dir := path.Dir(out[i].Files[0]); seen[out[i].Quant] > 1 && dir != "." {
+			out[i].Quant += " (" + path.Base(dir) + ")"
+		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Size < out[j].Size })
 	return out

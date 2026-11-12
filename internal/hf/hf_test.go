@@ -12,6 +12,7 @@ func TestGroupVariants(t *testing.T) {
 		{Name: "BF16/M-27B-BF16-00002-of-00003.gguf", Size: 25 << 30},
 		{Name: "BF16/M-27B-BF16-00003-of-00003.gguf", Size: 25<<30 - 10<<20},
 		{Name: "MTP/mtp-M-27B-Q8_0.gguf", Size: 2 << 30},
+		{Name: "BF16/imatrix_micro3.gguf", Size: 1 << 30},
 	}
 	vs := groupVariants(files)
 	if len(vs) != 4 {
@@ -59,5 +60,25 @@ func TestAssessRecommendsGPUQuant(t *testing.T) {
 		if v.Quant == "Q8_0" && v.Fit != "hybrid" {
 			t.Errorf("Q8_0 fit %s", v.Fit)
 		}
+	}
+}
+
+func TestDuplicateLabels(t *testing.T) {
+	vs := groupVariants([]RepoFile{
+		{Name: "a/M-UD-Q4_K_XL-00001-of-00002.gguf", Size: 10 << 20},
+		{Name: "a/M-UD-Q4_K_XL-00002-of-00002.gguf", Size: 50 << 30},
+		{Name: "b-V2/M-UD-Q4_K_XL-00001-of-00002.gguf", Size: 10 << 20},
+		{Name: "b-V2/M-UD-Q4_K_XL-00002-of-00002.gguf", Size: 50 << 30},
+		{Name: "c/M-UD-IQ4_XS.gguf", Size: 40 << 30},
+	})
+	labels := map[string]bool{}
+	for _, v := range vs {
+		if labels[v.Quant] {
+			t.Fatalf("duplicate label %q", v.Quant)
+		}
+		labels[v.Quant] = true
+	}
+	if !labels["Q4_K_XL (b-V2)"] {
+		t.Fatalf("labels %v", labels)
 	}
 }
