@@ -26,5 +26,7 @@ web/vendor/z-dash/ under its own licences: see
 web/vendor/z-dash/LICENSE (MIT; Google Sans under the SIL Open Font
 License 1.1; icon shapes from Lucide, ISC, and Feather, MIT).
 
-The container image bundles cloudflared (https://github.com/cloudflare/cloudflared),
-licensed under the Apache License 2.0.
+The container image is based on the official llama.cpp image
+(https://github.com/ggml-org/llama.cpp, MIT) and the NVIDIA CUDA runtime
+(NVIDIA Deep Learning Container License); it bundles llama.cpp's conversion
+scripts (MIT).
