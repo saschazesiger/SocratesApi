@@ -85,7 +85,7 @@ func TestExtraVRAM(t *testing.T) {
 	s := Settings{KVType: "q8_0", FlashAttn: "auto", Speculative: "mtp", Vision: &off}
 	const ctx = 262144
 	mtpKV := int64(ctx) * 2048 * 34 / 32 // 544 MiB
-	f16 := int64(ctx) * 2048 * 2         // 1 GiB
+	f16 := int64(ctx) * 2048             // 512 MiB
 	if got, want := extraVRAM(s, m, 0, ctx), 600<<20+mtpKV+f16; got != want {
 		t.Errorf("q8_0: %d, want %d", got, want)
 	}

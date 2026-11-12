@@ -41,6 +41,27 @@ The token embeddings always stay in RAM (llama.cpp reads one row per token). Ver
 per-layer embeddings of Flash-Next (27 GB), are read row by row from the file and are shown separately: they barely
 cost speed even when they stay on the NVMe.
 
+### 🧮 What the fit does not know
+
+The server allocates a few things llama.cpp's fit does not count. Socrates adds them to the VRAM kept free, for the
+largest context the plan can choose:
+
+| What | VRAM |
+|---|---|
+| Vision projector | its file size + 400 MB |
+| MTP draft context | 600 MB + the KV cache of the MTP layer (0.55 GB at 256k, `q8_0`, Qwen3.8 27B) |
+| Flash attention with a quantised KV cache | an f16 copy of one layer's cache while it reads a prompt (0.5 GB at 256k for Qwen3.8 27B) |
+
+Without the last two, Qwen3.8 27B at 256k loaded with 11 MB of VRAM free and crashed on a 60k prompt. With them it
+keeps 46 of 65 layers on the GPU and read a 189k prompt with 1.5 GB to spare, but wrote only 2.4 tok/s at that
+length: on 24 GB, 128k with everything on the GPU is the better choice.
+
+### 🐢 KV cache in RAM?
+
+llama.cpp can keep the KV cache in RAM (`-nkvo`), but then attention runs on the CPU over the whole context.
+Measured with Qwen3.8 27B: 12 tok/s on an empty context, **3.8 tok/s at 32k** (35 tok/s with it on the GPU).
+Moving whole layers is better; a shorter context or `q4_0` cache is better still.
+
 ## 📊 Reading the bars
 
 <img src="images/models-moe.png" alt="The placement of a 78 GB MoE model on a 24 GB GPU" width="800">

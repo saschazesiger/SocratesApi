@@ -214,10 +214,11 @@ func minCtx(m Meta) int {
 // server will allocate on the GPU for a context of ctx tokens:
 //   - the vision projector and its compute buffer;
 //   - the MTP draft context, which has its own KV cache for the MTP layer;
-//   - with a quantised KV cache, flash attention converts K and V of one
+//   - with a quantised KV cache, flash attention converts the cache of one
 //     layer to f16 in a temporary buffer while it reads a prompt. It grows
-//     with the filled context (1 GB at 256k for Qwen3.8 27B) and crashed the
-//     engine with an out-of-memory error once a conversation got long.
+//     with the filled context and crashed Qwen3.8 27B at 256k once a
+//     conversation got long. Measured: +333 MiB at 189k tokens, about one
+//     of K and V at a time, so ctx x KVDim x 2 bytes / 2.
 func extraVRAM(s Settings, m Meta, mmprojSize int64, ctx int) int64 {
 	var extra int64
 	if *s.Vision && mmprojSize > 0 {
@@ -227,7 +228,7 @@ func extraVRAM(s Settings, m Meta, mmprojSize int64, ctx int) int64 {
 		extra += 600<<20 + int64(ctx)*m.KVDim*kvBytes(s.KVType)/32
 	}
 	if s.KVType != "f16" && s.FlashAttn != "off" {
-		extra += int64(ctx) * m.KVDim * 2
+		extra += int64(ctx) * m.KVDim
 	}
 	return extra
 }
