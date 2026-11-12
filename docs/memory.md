@@ -89,7 +89,7 @@ and also works while another model runs (it plans against the VRAM that model wo
 | **VRAM kept free** | 1024 MB | More if the desktop or another program uses the GPU |
 | **Weights outside the GPU** | mmap | see below |
 | **Read the RAM weights in after start** | on | Fills free RAM so the first answers do not wait for the NVMe |
-| **Batch / micro-batch** | 2048 / 512; **4096 / 4096** for MoE models with experts in RAM | Larger micro-batches let llama.cpp stream the RAM experts to the GPU once per batch: prompt reading went from 115 to 430 tok/s on Flash-Next. They cost ~2 GB of VRAM for the compute buffer |
+| **Batch / micro-batch** | 2048 / 512; **4096 / 4096** when more than 8 GB of MoE experts end up in RAM | Socrates plans with the defaults first and only takes the large batches when many experts are in RAM: then llama.cpp streams them to the GPU once per batch (Flash-Next: 115 → 430 tok/s reading). With few experts in RAM the larger compute buffer would push more of them off the GPU (35B-A3B: 4 500 vs 2 200 tok/s) |
 | **Parallel requests** | 1 | More users at once; they share the context |
 | **Speculative decoding (MTP)** | on when the model has it | Off to save ~0.6 GB VRAM |
 
@@ -115,6 +115,7 @@ and also works while another model runs (it plans against the VRAM that model wo
 |---|---|---|---|---|
 | Huihui Qwen3.8 27B UD-Q4_K_XL | 17.4 GB | all on the GPU, 128k context, MTP | ~68 tok/s | ~1 400 tok/s (34k prompt) |
 | Qwen3.8-Flash-Next UD-IQ3_XXS | 77.9 GB | experts of 31 of 48 layers in RAM (31 GB), 27 GB lookup table on the NVMe | ~28 tok/s | ~26 tok/s (short prompts, CPU-bound) |
+| Huihui Qwen3.6 35B-A3B abliterated MTP Q4_K | 21.7 GB | all on the GPU, 44k context, vision, MTP | ~200 tok/s | ~4 500 tok/s |
 | Huihui Qwen3.8 Flash-Next abliterated v2 UD-IQ4_XS | 93.7 GB | experts of 37 of 48 layers in RAM (43 GB), 29 GB lookup table on the NVMe, no vision, micro-batch 4096 | ~22 tok/s | ~430 tok/s (5.6k prompt) |
 | Qwen3-0.6B, converted, Q4_K_M | 0.5 GB | all on the GPU | ~470 tok/s | |
 

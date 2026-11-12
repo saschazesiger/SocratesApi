@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/saschazesiger/SocratesApi/internal/gguf"
@@ -99,5 +100,28 @@ func TestExtraVRAM(t *testing.T) {
 	}
 	if got := ctxBound(Settings{}, Meta{CtxTrain: 262144}); got != maxAutoCtx {
 		t.Errorf("automatic context bound %d, want %d", got, maxAutoCtx)
+	}
+}
+
+func TestWithBatches(t *testing.T) {
+	plan := func(ram int64) func(Settings) Plan {
+		return func(s Settings) Plan {
+			pl := &Placement{}
+			pl.RAM.Weights = ram
+			if s.UBatch == 4096 {
+				pl.RAM.Weights = ram + gb
+			}
+			return Plan{OK: true, Placement: pl, Args: []string{"-ub", strconv.Itoa(s.UBatch)}}
+		}
+	}
+	moe := Meta{MoE: true}
+	if p := withBatches(Settings{}, moe, plan(2*gb)); p.Args[1] != "0" {
+		t.Errorf("few experts in RAM must keep the default batches, got %v", p.Args)
+	}
+	if p := withBatches(Settings{}, moe, plan(40*gb)); p.Args[1] != "4096" {
+		t.Errorf("many experts in RAM want large batches, got %v", p.Args)
+	}
+	if p := withBatches(Settings{UBatch: 256}, moe, plan(40*gb)); p.Args[1] != "256" {
+		t.Errorf("an explicit batch wins, got %v", p.Args)
 	}
 }

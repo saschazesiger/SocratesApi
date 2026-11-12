@@ -503,7 +503,7 @@ func (e *Engine) runModel(ctx context.Context, m store.Model) {
 		e.fail("Planning failed: " + plan.Error)
 		return
 	}
-	s := moeBatches(settings.withDefaults(meta), settings, meta, e.systemFor(m.ID))
+	s := settings.withDefaults(meta)
 	args := append([]string{}, plan.Args...)
 	args = append(args, serverArgs(m, s, meta, mmproj, e.cfg.Port)...)
 	extra, _ := SplitArgs(s.ExtraArgs)

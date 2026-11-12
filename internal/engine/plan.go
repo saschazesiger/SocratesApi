@@ -186,16 +186,33 @@ func baseArgs(paths []string, s Settings, m Meta) []string {
 	return a
 }
 
-// moeBatches raises the default batch sizes for MoE models whose experts
-// cannot all stay on the GPU: llama.cpp then streams the experts in RAM to
-// the GPU for each batch of the prompt, and larger batches make that pay.
-// Measured with Qwen3.8-Flash-Next on an RTX 3090: 115 -> 430 tok/s
-// prompt processing at 4096, generation unchanged.
-func moeBatches(s, raw Settings, m Meta, sys System) Settings {
-	if raw.Batch == 0 && raw.UBatch == 0 && m.MoE && sys.GPUTotal > 0 && m.ExpertBytes > sys.GPUTotal/2 {
-		s.Batch, s.UBatch = 4096, 4096
+// bigBatchExperts is how many bytes of experts must be in RAM before the
+// larger default batches pay. With many experts in RAM, llama.cpp streams
+// them to the GPU for each batch of the prompt, and larger batches make
+// that pay (Qwen3.8-Flash-Next, 43 GB of experts in RAM, RTX 3090: 115 ->
+// 430 tok/s prompt, generation unchanged). With few, the larger compute
+// buffer only pushes experts off the GPU (Qwen3.6-35B-A3B: 4 500 -> 2 200
+// tok/s prompt, 210 -> 88 tok/s generation).
+const bigBatchExperts = 8 * gb
+
+// withBatches plans twice for a MoE model whose batch sizes were left open:
+// with the default batches, and, if that leaves many experts in RAM, with
+// 4096. plan is Make or MakeVirtual with everything else bound.
+func withBatches(raw Settings, m Meta, plan func(Settings) Plan) Plan {
+	first := plan(raw)
+	if !m.MoE || raw.Batch != 0 || raw.UBatch != 0 || !first.OK || first.Placement == nil ||
+		first.Placement.RAM.Weights < bigBatchExperts {
+		return first
 	}
-	return s
+	big := raw
+	big.Batch, big.UBatch = 4096, 4096
+	second := plan(big)
+	if !second.OK {
+		return first
+	}
+	second.Placement.Notes = append(second.Placement.Notes,
+		"Many experts are in RAM: prompts are read in batches of 4096 tokens, which reads them several times faster.")
+	return second
 }
 
 const (
@@ -260,8 +277,12 @@ func ctxBound(s Settings, m Meta) int {
 // Make computes the plan for a model. It takes a few seconds: llama.cpp
 // reads the header and computes the buffers without allocating them.
 func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, raw Settings, f *gguf.File, m Meta, sys System) Plan {
+	return withBatches(raw, m, func(s Settings) Plan { return p.make(ctx, paths, mmprojSize, s, f, m, sys) })
+}
+
+func (p *Planner) make(ctx context.Context, paths []string, mmprojSize int64, raw Settings, f *gguf.File, m Meta, sys System) Plan {
 	start := time.Now()
-	s := moeBatches(raw.withDefaults(m), raw, m, sys)
+	s := raw.withDefaults(m)
 	plan := Plan{}
 	reserve := int64(s.GPUReserveMB)<<20 + extraVRAM(s, m, mmprojSize, ctxBound(s, m))
 
@@ -598,8 +619,12 @@ func knownLlamaError(out string) string {
 // is done here with the exact tensor sizes of the file, then the chosen
 // configuration is measured again.
 func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize int64, raw Settings, f *gguf.File, m Meta, sys System, freeVRAM int64) Plan {
+	return withBatches(raw, m, func(s Settings) Plan { return p.makeVirtual(ctx, paths, mmprojSize, s, f, m, sys, freeVRAM) })
+}
+
+func (p *Planner) makeVirtual(ctx context.Context, paths []string, mmprojSize int64, raw Settings, f *gguf.File, m Meta, sys System, freeVRAM int64) Plan {
 	start := time.Now()
-	s := moeBatches(raw.withDefaults(m), raw, m, sys)
+	s := raw.withDefaults(m)
 	plan := Plan{}
 	budget := freeVRAM - int64(s.GPUReserveMB)<<20 - extraVRAM(s, m, mmprojSize, ctxBound(s, m))
 
