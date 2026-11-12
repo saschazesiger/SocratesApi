@@ -3,7 +3,7 @@
  * of theme.css): no colour, radius, font, shadow, duration or curve
  * literals, no keyframes, and no rule that restyles a .ds-* component.
  *
- *   .so-logo        the brand mark: a column on the primary colour
+ *   .so-logo        the Socrates mark (img/logo.png): a brand image, not a glyph
  *   .so-brand-row   the mark and the name above the sign-in card
  *   .so-engine      the engine's state and model in the top bar, a link to Models
  *   .so-grow        takes the room left in a row (a code block beside its copy button)
@@ -21,30 +21,11 @@
  */
 
 .so-logo {
-  display: inline-block;
+  display: block;
   flex: none;
-  position: relative;
-  width: var(--so-logo-size);
-  height: var(--so-logo-size);
-  border-radius: var(--ds-radius-sm);
-  background: var(--ds-primary);
-}
-
-/* The column: capital, shaft and base as one shape. */
-.so-logo::before {
-  content: '';
-  position: absolute;
-  inset: 22% 22%;
-  background: var(--ds-on-primary);
-  clip-path: polygon(0 0, 100% 0, 100% 16%, 82% 16%, 82% 84%, 100% 84%, 100% 100%, 0 100%, 0 84%, 18% 84%, 18% 16%, 0 16%);
-}
-
-/* Its two flutes. */
-.so-logo::after {
-  content: '';
-  position: absolute;
-  inset: 34% 40% 34%;
-  border-inline: 2px solid var(--ds-primary);
+  inline-size: var(--so-logo-size);
+  block-size: var(--so-logo-size);
+  object-fit: contain;
 }
 
 .so-brand-row {

@@ -1,0 +1,20 @@
+{
+  "id": "/",
+  "name": "Socrates API",
+  "short_name": "Socrates API",
+  "description": "Runs a language model on your own hardware and serves it through an OpenAI- and Anthropic-compatible API.",
+  "lang": "en",
+  "dir": "ltr",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f0f4f9",
+  "theme_color": "#f0f4f9",
+  "categories": ["developer", "utilities"],
+  "icons": [
+    { "src": "/img/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/img/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/img/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" },
+    { "src": "/img/apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" }
+  ]
+}

@@ -12,4 +12,5 @@ First release.
 - 🔥 One active model kept loaded: crash restarts, read-in of RAM weights, requests wait while it loads.
 - 💬 Chat with thinking, Markdown and a live status line (queue, prompt progress, tok/s), engine log.
 - 🔌 OpenAI- and Anthropic-compatible API with API keys, usage per key and a request log; tested with opencode.
+- 🎨 The look of Socrates: its logo and icons, Z-Dash's own colours, Source Code Pro for code; installable as an app.
 - 🐳 One image on llama.cpp b12316 (CUDA 12.8).

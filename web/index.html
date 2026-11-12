@@ -5,7 +5,16 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Socrates API</title>
 <meta name="description" content="Socrates API runs a language model on your own hardware and serves it through an OpenAI- and Anthropic-compatible API.">
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#f0f4f9" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#131314" media="(prefers-color-scheme: dark)">
+<!-- Added to the Home Screen, Socrates API opens as an app of its own. iOS reads these rather than the manifest,
+     and takes an opaque apple-touch-icon, because it fills a transparent corner with black. -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Socrates API">
+<link rel="icon" href="img/favicon.png" type="image/png">
+<link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
+<link rel="manifest" href="manifest.json">
 <!-- Fonts, the design system, the Socrates theme (tokens only), the shipped dark theme when the device asks for it,
      then the layout glue. No inline scripts: the Content-Security-Policy forbids them. -->
 <link rel="stylesheet" href="vendor/z-dash/fonts/fonts.css">
@@ -22,7 +31,7 @@
 <div class="ds-auth" id="auth" hidden>
   <div class="ds-auth__alert" id="auth-alert"></div>
   <section class="ds-card ds-card--elevated ds-auth__card" aria-labelledby="auth-title">
-    <div class="so-brand-row"><span class="so-logo" aria-hidden="true"></span><span class="ds-brand__name">Socrates API</span></div>
+    <div class="so-brand-row"><img class="so-logo" src="img/logo.png" alt="" width="32" height="32"><span class="ds-brand__name">Socrates API</span></div>
     <h1 class="ds-card__title" id="auth-title" tabindex="-1">Sign in</h1>
     <form class="ds-form" id="login-form" novalidate>
       <div class="ds-field">
@@ -65,7 +74,7 @@
 
   <div class="ds-topbar">
     <button class="ds-btn ds-btn--quiet ds-btn--icon ds-topbar__menu" type="button" aria-label="Menu" aria-expanded="false" aria-controls="drawer" id="menu" data-icon="menu" data-icon-place="start"></button>
-    <a class="ds-brand" href="#/models"><span class="so-logo" aria-hidden="true"></span><span class="ds-brand__name">Socrates API</span></a>
+    <a class="ds-brand" href="#/models"><img class="so-logo" src="img/logo.png" alt="" width="32" height="32"><span class="ds-brand__name">Socrates API</span></a>
     <div class="ds-topbar__actions">
       <!-- The engine at a glance, on every page: its state and the model. -->
       <a class="so-engine ds-pressable" href="#/models" id="engine-link"></a>
@@ -81,7 +90,7 @@
 
   <div class="ds-scrim"></div>
   <nav class="ds-drawer" id="drawer" aria-label="Main" tabindex="-1">
-    <div class="ds-drawer__head" aria-hidden="true"><span class="so-logo"></span><span class="ds-brand__name">Socrates API</span></div>
+    <div class="ds-drawer__head" aria-hidden="true"><img class="so-logo" src="img/logo.png" alt="" width="32" height="32"><span class="ds-brand__name">Socrates API</span></div>
     <div class="ds-drawer__list" id="nav">
       <div class="ds-drawer__group">
         <a class="ds-drawer__item" href="#/models" data-route="models" data-icon="layers" data-icon-place="start"><span class="ds-drawer__label">Models</span></a>
