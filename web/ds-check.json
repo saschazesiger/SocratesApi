@@ -1,0 +1,11 @@
+{
+  "major": 3,
+  "prefix": "so",
+  "css": ["app.css"],
+  "js": ["app/**/*.js"],
+  "html": ["index.html"],
+  "themes": ["theme.css"],
+  "themesWith": ["vendor/z-dash/themes/dark.css"],
+  "vendor": "vendor/z-dash",
+  "exceptions": []
+}

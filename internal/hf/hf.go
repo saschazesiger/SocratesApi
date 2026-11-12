@@ -352,8 +352,11 @@ func groupVariants(files []RepoFile) []Variant {
 	var order []string
 	for _, f := range files {
 		low := strings.ToLower(f.Name)
-		// Patches and tiny helper files are no models.
-		if strings.Contains(low, "patch") || (f.Size > 0 && f.Size < 50<<20) {
+		base := path.Base(low)
+		// Patches, separate MTP drafts and tiny helper files are no models;
+		// the first part of a split model may be tiny, it holds the header.
+		if strings.Contains(low, "patch") || strings.HasPrefix(base, "mtp-") || strings.HasPrefix(low, "mtp/") ||
+			(f.Size > 0 && f.Size < 50<<20 && !splitRe.MatchString(f.Name)) {
 			continue
 		}
 		key := splitRe.ReplaceAllString(f.Name, "")

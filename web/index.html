@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en" class="ds-theme ds-base">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Socrates API</title>
+<meta name="description" content="Socrates API runs a language model on your own hardware and serves it through an OpenAI- and Anthropic-compatible API.">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<!-- Fonts, the design system, the Socrates theme (tokens only), the shipped dark theme when the device asks for it,
+     then the layout glue. No inline scripts: the Content-Security-Policy forbids them. -->
+<link rel="stylesheet" href="vendor/z-dash/fonts/fonts.css">
+<link rel="stylesheet" href="vendor/z-dash/ds.min.css">
+<link rel="stylesheet" href="theme.css">
+<link rel="stylesheet" href="vendor/z-dash/themes/dark.css" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<!-- While the session loads: shows only when that takes a moment. -->
+<div class="ds-boot" role="status" id="boot"><span class="ds-loader" aria-hidden="true"></span>Starting Socrates API ...</div>
+
+<!-- Sign in, or set the admin password on the first start. -->
+<div class="ds-auth" id="auth" hidden>
+  <div class="ds-auth__alert" id="auth-alert"></div>
+  <section class="ds-card ds-card--elevated ds-auth__card" aria-labelledby="auth-title">
+    <div class="so-brand-row"><span class="so-logo" aria-hidden="true"></span><span class="ds-brand__name">Socrates API</span></div>
+    <h1 class="ds-card__title" id="auth-title" tabindex="-1">Sign in</h1>
+    <form class="ds-form" id="login-form" novalidate>
+      <div class="ds-field">
+        <label class="ds-field__label" for="login-password">Admin password</label>
+        <input class="ds-input" id="login-password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-hint">
+        <small class="ds-field__hint" id="login-hint">Forgot it? Start the container with the environment variable SOCRATES_ADMIN_PASSWORD set to a new password.</small>
+      </div>
+      <div class="ds-form-actions">
+        <button class="ds-btn ds-btn--filled" type="submit"><span class="ds-btn__faces">
+          <span class="ds-btn__face">Sign in</span>
+          <span class="ds-btn__face ds-btn__face--busy" aria-hidden="true"><span class="ds-spinner ds-spinner--ink ds-sm"></span>Signing in</span>
+          <span class="ds-btn__face ds-btn__face--done" aria-hidden="true" data-icon-done>Signed in</span>
+        </span></button>
+      </div>
+    </form>
+    <form class="ds-form" id="setup-form" novalidate hidden>
+      <p class="ds-muted">Welcome. Choose the password that protects this page; the API itself uses keys you create later.</p>
+      <div class="ds-field">
+        <label class="ds-field__label" for="setup-password">Admin password</label>
+        <input class="ds-input" id="setup-password" name="password" type="password" autocomplete="new-password" minlength="10" required aria-describedby="setup-hint">
+        <small class="ds-field__hint" id="setup-hint">At least 10 characters.</small>
+      </div>
+      <div class="ds-field">
+        <label class="ds-field__label" for="setup-again">Repeat the password</label>
+        <input class="ds-input" id="setup-again" type="password" autocomplete="new-password" required>
+      </div>
+      <div class="ds-form-actions">
+        <button class="ds-btn ds-btn--filled" type="submit"><span class="ds-btn__faces">
+          <span class="ds-btn__face">Set the password</span>
+          <span class="ds-btn__face ds-btn__face--busy" aria-hidden="true"><span class="ds-spinner ds-spinner--ink ds-sm"></span>Saving</span>
+          <span class="ds-btn__face ds-btn__face--done" aria-hidden="true" data-icon-done>Saved</span>
+        </span></button>
+      </div>
+    </form>
+  </section>
+</div>
+
+<div class="ds-app ds-app--drawer" id="app" hidden>
+  <a class="ds-skip" href="#main">Skip to content</a>
+
+  <div class="ds-topbar">
+    <button class="ds-btn ds-btn--quiet ds-btn--icon ds-topbar__menu" type="button" aria-label="Menu" aria-expanded="false" aria-controls="drawer" id="menu" data-icon="menu" data-icon-place="start"></button>
+    <a class="ds-brand" href="#/models"><span class="so-logo" aria-hidden="true"></span><span class="ds-brand__name">Socrates API</span></a>
+    <div class="ds-topbar__actions">
+      <!-- The engine at a glance, on every page: its state and the model. -->
+      <a class="so-engine ds-pressable" href="#/models" id="engine-link"></a>
+      <a class="ds-btn ds-btn--quiet ds-btn--icon" href="https://github.com/saschazesiger/SocratesApi#readme" target="_blank" rel="noopener" aria-label="Documentation (opens GitHub)" data-tip="Documentation" data-icon="helpCircle" data-icon-place="start"></a>
+    </div>
+    <div class="ds-account ds-account--capsule" id="account">
+      <div class="ds-account__text" aria-hidden="true"><div class="ds-account__name">Admin</div><div class="ds-account__email" id="account-version"></div></div>
+      <span class="ds-account__avatar" role="img" aria-label="Admin" data-tip="Admin">A</span>
+      <span class="ds-account__divider"></span>
+      <button class="ds-btn ds-btn--text" type="button" id="sign-out">Sign out</button>
+    </div>
+  </div>
+
+  <div class="ds-scrim"></div>
+  <nav class="ds-drawer" id="drawer" aria-label="Main" tabindex="-1">
+    <div class="ds-drawer__head" aria-hidden="true"><span class="so-logo"></span><span class="ds-brand__name">Socrates API</span></div>
+    <div class="ds-drawer__list" id="nav">
+      <div class="ds-drawer__group">
+        <a class="ds-drawer__item" href="#/models" data-route="models" data-icon="layers" data-icon-place="start"><span class="ds-drawer__label">Models</span></a>
+        <a class="ds-drawer__item" href="#/chat" data-route="chat" data-icon="chat" data-icon-place="start"><span class="ds-drawer__label">Chat</span></a>
+        <a class="ds-drawer__item" href="#/api" data-route="api" data-icon="braces" data-icon-place="start"><span class="ds-drawer__label">API</span></a>
+      </div>
+    </div>
+  </nav>
+
+  <div class="ds-panel">
+    <main class="ds-view" id="main" tabindex="-1">
+      <div class="ds-content">
+        <div class="ds-page" id="page"></div>
+      </div>
+      <!-- Unsaved edits of a model's settings: the last child of the view (DS.overlay.savebar()). -->
+      <div class="ds-savebar" id="savebar">
+        <div class="ds-savebar__bar ds-presence" role="region" aria-label="Unsaved changes" hidden>
+          <p class="ds-savebar__text" id="savebar-text">1 unsaved change</p>
+          <div class="ds-savebar__actions">
+            <button class="ds-btn ds-btn--text" type="button" id="savebar-discard">Discard</button>
+            <button class="ds-btn ds-btn--filled" type="submit" form="settings-form" id="savebar-save"><span class="ds-btn__faces">
+              <span class="ds-btn__face" id="savebar-label">Save</span>
+              <span class="ds-btn__face ds-btn__face--busy" aria-hidden="true"><span class="ds-spinner ds-spinner--ink ds-sm"></span>Saving</span>
+              <span class="ds-btn__face ds-btn__face--done" aria-hidden="true" data-icon-done>Saved</span>
+            </span></button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+
+<!-- Right after .ds-app: DS.overlay.toast() adds its live regions next to it. -->
+<div class="ds-toasts" id="toasts"></div>
+
+<!-- One side sheet for a list a view opens (past chats). -->
+<dialog class="ds-sheet" id="sheet" aria-labelledby="sheet-title">
+  <div class="ds-sheet__backdrop" data-ds-close></div>
+  <section class="ds-sheet__panel">
+    <div class="ds-sheet__head">
+      <div class="ds-sheet__heading">
+        <h2 class="ds-sheet__title" id="sheet-title">Details</h2>
+        <p class="ds-sheet__subtitle" id="sheet-subtitle"></p>
+      </div>
+      <button class="ds-btn ds-btn--quiet ds-btn--icon" type="button" aria-label="Close" data-tip="Close" data-ds-close data-icon="close" data-icon-place="start"></button>
+    </div>
+    <div class="ds-sheet__body" tabindex="0" id="sheet-body"></div>
+  </section>
+</dialog>
+
+<!-- The engine log: what llama-server prints, live. Opened from the Models and Chat pages. -->
+<dialog class="ds-sheet" id="log-sheet" aria-labelledby="log-sheet-title">
+  <div class="ds-sheet__backdrop" data-ds-close></div>
+  <section class="ds-sheet__panel ds-sheet__panel--wide">
+    <div class="ds-sheet__head">
+      <div class="ds-sheet__heading">
+        <h2 class="ds-sheet__title" id="log-sheet-title">Engine log</h2>
+        <p class="ds-sheet__subtitle">The output of llama-server, live. The last 1 000 lines.</p>
+      </div>
+      <button class="ds-btn ds-btn--quiet ds-btn--icon" type="button" aria-label="Close" data-tip="Close" data-ds-close data-icon="close" data-icon-place="start"></button>
+    </div>
+    <div class="ds-sheet__body" id="log-sheet-body">
+      <div class="ds-logview so-log" id="engine-log" aria-label="Engine log"><pre class="ds-logview__source"></pre></div>
+    </div>
+  </section>
+</dialog>
+
+<!-- A new API key, shown once. -->
+<dialog class="ds-dialog ds-dialog--lg" id="secret-dialog" aria-labelledby="secret-title" data-ds-busy>
+  <div class="ds-dialog__backdrop"></div>
+  <div class="ds-dialog__box">
+    <h2 class="ds-dialog__title" id="secret-title">Your new API key</h2>
+    <div class="ds-dialog__body ds-stack">
+      <div class="ds-alert ds-tone-warning" data-icon="alert" data-icon-place="start"><div class="ds-alert__text"><p class="ds-alert__title">Copy it now</p><p>This is the only time the key is shown. Socrates keeps only a hash of it; if you lose it, create a new one.</p></div></div>
+      <div class="ds-field">
+        <label class="ds-field__label" for="secret-value">Key <span id="secret-name"></span></label>
+        <div class="ds-field__row">
+          <input class="ds-input ds-mono" id="secret-value" readonly spellcheck="false">
+          <button class="ds-btn ds-btn--quiet ds-btn--icon" type="button" aria-label="Copy the key" data-tip="Copy the key" data-copy="secret-value"><span class="ds-icon-swap" data-swap="a"><span class="ds-icon-swap__a" data-icon="copy"></span><span class="ds-icon-swap__b" data-icon="check"></span></span></button>
+        </div>
+      </div>
+      <label class="ds-check"><input type="checkbox" id="secret-stored"><span>I have stored the key</span></label>
+    </div>
+    <div class="ds-dialog__actions">
+      <button class="ds-btn ds-btn--filled" type="button" id="secret-done" aria-disabled="true" data-tip="Tick the box first: the key is not shown again">Done</button>
+    </div>
+  </div>
+</dialog>
+
+<script src="vendor/z-dash/ds.min.js"></script>
+<script type="module" src="app/main.js"></script>
+</body>
+</html>

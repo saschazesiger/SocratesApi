@@ -275,6 +275,14 @@ func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, ra
 	plan.Placement = pl
 	plan.Fits, plan.Summary, plan.Speed = verdict(pl, m, sys)
 	pl.Notes = append(pl.Notes, plan.Summary)
+	switch {
+	case s.LoadMode == "mlock" && plan.Fits == "disk":
+		pl.Notes = append(pl.Notes, "mlock pins the weights in RAM, but they do not fit: loading will fail. Use mmap, so the rest is read from the NVMe.")
+	case s.LoadMode == "ram" && plan.Fits == "disk":
+		pl.Notes = append(pl.Notes, "\"Copy into RAM\" needs all CPU weights in RAM, but they do not fit. Use mmap.")
+	case plan.Fits == "disk":
+		pl.Notes = append(pl.Notes, "Close other programs that use RAM, choose a smaller quantisation, or a shorter context, to keep more of it in RAM.")
+	}
 	plan.OK = true
 	plan.TookMs = time.Since(start).Milliseconds()
 	return plan

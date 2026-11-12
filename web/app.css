@@ -1,0 +1,192 @@
+/*
+ * Layout glue of Socrates API, prefix so-. Tokens only (--ds-* and the --so-*
+ * of theme.css): no colour, radius, font, shadow, duration or curve
+ * literals, no keyframes, and no rule that restyles a .ds-* component.
+ *
+ *   .so-logo        the brand mark: a column on the primary colour
+ *   .so-brand-row   the mark and the name above the sign-in card
+ *   .so-engine      the engine's state and model in the top bar, a link to Models
+ *   .so-grow        takes the room left in a row (a code block beside its copy button)
+ *   .so-tiers       the memory bars of a placement (GPU, RAM, NVMe), one under the other
+ *   .so-tier        one memory bar and the line of facts under it
+ *   .so-settings    a model's settings beside their placement preview, which needs room for its bars
+ *   .so-sticky      the preview card, kept in view while the settings scroll
+ *   .so-transfer    a download's progress in a model row: as wide as the row, long file names wrap
+ *   .so-variants    the radio cards of a repository's quantisations, as many per row as fit
+ *   .so-chat        the chat column: transcript, status line and composer
+ *   .so-fill        the part of a column that takes the rest of its height and scrolls itself
+ *   .so-statusline  the live line above the composer and its engine-log button
+ *   .so-log         the engine log in its side sheet
+ *   .so-col-*       stable widths for table columns with live values
+ */
+
+.so-logo {
+  display: inline-block;
+  flex: none;
+  position: relative;
+  width: var(--so-logo-size);
+  height: var(--so-logo-size);
+  border-radius: var(--ds-radius-sm);
+  background: var(--ds-primary);
+}
+
+/* The column: capital, shaft and base as one shape. */
+.so-logo::before {
+  content: '';
+  position: absolute;
+  inset: 22% 22%;
+  background: var(--ds-on-primary);
+  clip-path: polygon(0 0, 100% 0, 100% 16%, 82% 16%, 82% 84%, 100% 84%, 100% 100%, 0 100%, 0 84%, 18% 84%, 18% 16%, 0 16%);
+}
+
+/* Its two flutes. */
+.so-logo::after {
+  content: '';
+  position: absolute;
+  inset: 34% 40% 34%;
+  border-inline: 2px solid var(--ds-primary);
+}
+
+.so-brand-row {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-3);
+}
+
+.so-engine {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  max-width: 22rem;
+  padding: var(--ds-space-1) var(--ds-space-2);
+  border-radius: var(--ds-radius-action);
+  color: var(--ds-text);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.so-engine__model {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font: var(--ds-font-label);
+}
+
+.so-grow {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.so-tiers {
+  display: grid;
+  gap: var(--ds-space-5);
+}
+
+.so-tier {
+  display: grid;
+  gap: var(--ds-space-2);
+}
+
+.so-settings {
+  --ds-split-side: 26rem;
+}
+
+.so-sticky {
+  position: sticky;
+  top: var(--ds-space-4);
+}
+
+/* Its size never widens the row: a long file name wraps instead of pushing the row out of its card. */
+.so-transfer {
+  display: block;
+  min-width: 0;
+  contain: inline-size;
+  overflow-wrap: anywhere;
+}
+
+.so-variants {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--so-variant-min), 1fr));
+}
+
+/* The chat: the page's last child in a fixed view; the transcript takes what the status line and composer leave. */
+.so-chat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--ds-space-2);
+  min-height: 0;
+  height: 100%;
+}
+
+.so-fill {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.so-statusline {
+  display: flex;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-height: var(--ds-space-8);
+  width: 100%;
+  max-width: var(--ds-transcript-max-width, 768px);
+  margin-inline: auto;
+}
+
+.so-statusline__text {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  gap: var(--ds-space-2);
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.so-statusline__rest {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.so-composer {
+  width: 100%;
+  max-width: var(--ds-transcript-max-width, 768px);
+  margin-inline: auto;
+}
+
+.so-log {
+  --ds-logview-height: var(--so-log-height);
+}
+
+.so-col-num {
+  min-width: 88px;
+}
+
+.so-col-time {
+  min-width: 96px;
+}
+
+@media (max-width: 600px) {
+  .so-engine__model {
+    display: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .so-logo {
+    forced-color-adjust: none;
+    background: CanvasText;
+  }
+
+  .so-logo::before {
+    background: Canvas;
+  }
+
+  .so-logo::after {
+    border-color: CanvasText;
+  }
+}

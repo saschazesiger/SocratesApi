@@ -1,0 +1,43 @@
+/*
+ * The Socrates API theme: tokens only, loaded after ds.css and unlayered, so
+ * it wins over the defaults of Z-Dash. It sets the brand roles (a calm teal
+ * accent) and their dark tones, the chart series the memory bars use, and
+ * the project's own tokens (--so-*) that app.css reads. Never motion tokens,
+ * never a component's look.
+ */
+
+.ds-theme {
+  --ds-primary: #006a63;
+  --ds-on-primary: #ffffff;
+  --ds-accent: #c8ebe5;
+  --ds-on-accent: #00201d;
+  --ds-inverse-primary: #81d5cc;
+  --ds-backdrop: #f0f5f4;
+
+  /* The memory bars: weights (the primary), KV cache, compute buffers. Apart from the teal, and from each other. */
+  --ds-chart-2: #c76a00;
+  --ds-chart-3: #8e44c9;
+  --ds-chart-4: #2d6bb8;
+
+  /* Interactive cards lift a little on hover. */
+  --ds-card-hover-shadow: var(--ds-elev-hover);
+
+  --so-logo-size: 32px;
+  --so-log-height: 70vh;
+  --so-variant-min: 15rem;
+}
+
+/* The dark tones. themes/dark.css loads after this file with the same media query and sets its own primary and
+   chart series; the doubled class outweighs its plain .ds-theme. */
+@media (prefers-color-scheme: dark) {
+  .ds-theme.ds-base {
+    --ds-primary: #81d5cc;
+    --ds-on-primary: #003733;
+    --ds-accent: #1f4e49;
+    --ds-on-accent: #c8ebe5;
+    --ds-inverse-primary: #006a63;
+    --ds-chart-2: #f0a35c;
+    --ds-chart-3: #c58af9;
+    --ds-chart-4: #7fb0f0;
+  }
+}

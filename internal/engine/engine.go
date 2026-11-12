@@ -483,7 +483,8 @@ func (e *Engine) runModel(ctx context.Context, m store.Model) {
 	// Child mode makes llama-server report its loading progress and memory
 	// as JSON lines on stdout; logs go to stderr.
 	cmd.Env = append(os.Environ(), "LLAMA_SERVER_ROUTER_PORT="+strconv.Itoa(e.cfg.Port), "LLAMA_ARG_LOG_COLORS=off")
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pdeathsig: syscall.SIGKILL}
+	// No Pdeathsig: Go may end the OS thread that started the child, which would kill it.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
 	stderr, _ := cmd.StderrPipe()

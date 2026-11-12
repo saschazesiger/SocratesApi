@@ -12,6 +12,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -198,6 +199,7 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 		writeError(w, 400, "Choose a file (a quantisation) to download.")
 		return
 	}
+	sort.Strings(req.Files) // split models: part 1 first, llama.cpp opens the rest itself
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	repo, err := s.d.HF.Repo(ctx, repoID)

@@ -8,8 +8,10 @@ func TestGroupVariants(t *testing.T) {
 		{Name: "M-27B-Q8_0.gguf", Size: 27 << 30},
 		{Name: "M-27B-UD-DW-Q4_K_M.gguf", Size: 15 << 30},
 		{Name: "patch/M-27B-patch-1.gguf", Size: 1 << 30},
-		{Name: "BF16/M-27B-BF16-00001-of-00002.gguf", Size: 25 << 30},
-		{Name: "BF16/M-27B-BF16-00002-of-00002.gguf", Size: 25 << 30},
+		{Name: "BF16/M-27B-BF16-00001-of-00003.gguf", Size: 10 << 20},
+		{Name: "BF16/M-27B-BF16-00002-of-00003.gguf", Size: 25 << 30},
+		{Name: "BF16/M-27B-BF16-00003-of-00003.gguf", Size: 25<<30 - 10<<20},
+		{Name: "MTP/mtp-M-27B-Q8_0.gguf", Size: 2 << 30},
 	}
 	vs := groupVariants(files)
 	if len(vs) != 4 {
@@ -21,7 +23,7 @@ func TestGroupVariants(t *testing.T) {
 			t.Errorf("variant %q size %d", v.Quant, v.Size)
 		}
 	}
-	if vs[3].Quant != "BF16" || len(vs[3].Files) != 2 {
+	if vs[3].Quant != "BF16" || len(vs[3].Files) != 3 || vs[3].Files[0] != "BF16/M-27B-BF16-00001-of-00003.gguf" {
 		t.Errorf("split files not grouped: %+v", vs[3])
 	}
 	if vs[1].Bits == 0 {
