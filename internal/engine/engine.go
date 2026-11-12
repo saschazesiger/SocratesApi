@@ -88,7 +88,13 @@ type Engine struct {
 	snapshot   sysinfo.Snapshot
 	logs       []string
 	restartReq bool
-	version    string
+
+	childProgress float64 // llama.cpp's own loading progress
+	readStart     time.Time
+	readPrev      int64
+	readPrevAt    time.Time
+	readRate      float64
+	version       string
 }
 
 type run struct {
@@ -462,6 +468,7 @@ func (e *Engine) runModel(ctx context.Context, m store.Model) {
 	})
 	paths, mmproj := e.files(m)
 	settings := ParseSettings(m.Settings)
+	e.dropOtherModels(m.ID)
 	meta, f, err := ReadMeta(paths, mmproj != "")
 	if err != nil {
 		e.fail(fmt.Sprintf("The model file cannot be read (%v). Delete the model and download it again.", err))
@@ -513,6 +520,9 @@ func (e *Engine) runModel(ctx context.Context, m store.Model) {
 	}
 	e.mu.Lock()
 	e.pid = cmd.Process.Pid
+	e.childProgress = 0
+	e.readStart = time.Now()
+	e.readPrev, e.readPrevAt, e.readRate = 0, time.Time{}, 0
 	e.mu.Unlock()
 
 	var wg sync.WaitGroup
@@ -707,6 +717,23 @@ func (e *Engine) readState(r io.Reader, m store.Model, plan Plan) {
 			if text == "" {
 				text = "Loading"
 			}
+			e.mu.Lock()
+			e.childProgress = overall
+			e.mu.Unlock()
+			if overall == 0 {
+				// Before llama.cpp counts, it maps the files and reads them
+				// in; monitor() shows that phase from the page cache.
+				e.set(func(s *Status) {
+					if s.State != Loading {
+						s.Since = store.Now()
+						s.State = Loading
+						s.Stage = "reading"
+						s.Progress = progress(0)
+						s.Message = "Opening the model files"
+					}
+				})
+				continue
+			}
 			e.set(func(s *Status) {
 				if s.State != Loading {
 					s.Since = store.Now()
@@ -846,13 +873,24 @@ func (e *Engine) afterReady(ctx context.Context, plan Plan, paths []string, s Se
 	if plan.Fits != "gpu" {
 		dropGPUPages(paths, pl)
 	}
+	// Read in what fits into the free RAM (keeping 4 GB for everything
+	// else): more would only push out pages that are in use.
 	if s.Preload != nil && *s.Preload && len(pl.cpuRanges) > 0 {
-		snap := e.sys.Read(0)
-		limit := snap.RAM.Available - 4*gb
-		if limit > 0 {
-			e.appendLog([]string{fmt.Sprintf("── socrates: reading up to %s of RAM weights into the page cache", fmtGB(min64(limit, pl.RAM.Weights)))})
-			preload(paths, pl.cpuRanges, limit, stop)
+		have := resident(paths, pl.cpuRanges)
+		if have >= pl.RAM.Weights*95/100 {
+			return
 		}
+		snap := e.sys.Read(0)
+		// MemAvailable counts clean file pages as free, ours included.
+		room := snap.RAM.Available - have - 4*gb
+		if room <= 0 {
+			return
+		}
+		limit := have + room // pages already cached are read without I/O
+		e.appendLog([]string{fmt.Sprintf("── socrates: reading up to %s more of the RAM weights into the page cache (%s are there)",
+			fmtGB(min64(room, pl.RAM.Weights-have)), fmtGB(have))})
+		preload(paths, pl.cpuRanges, limit, stop)
+		e.appendLog([]string{fmt.Sprintf("── socrates: %s of %s RAM weights are in RAM", fmtGB(resident(paths, pl.cpuRanges)), fmtGB(pl.RAM.Weights))})
 	}
 }
 
@@ -890,6 +928,31 @@ func dropGPUPages(paths []string, pl *Placement) {
 	}
 }
 
+// dropOtherModels lets the kernel drop the cached pages of the files of
+// all other models: after a switch they only take RAM from the weights of
+// the active model, and the kernel would rather drop those (newer) pages.
+func (e *Engine) dropOtherModels(activeID string) {
+	entries, err := os.ReadDir(e.cfg.ModelsDir)
+	if err != nil {
+		return
+	}
+	for _, d := range entries {
+		if !d.IsDir() || d.Name() == activeID {
+			continue
+		}
+		_ = filepath.WalkDir(filepath.Join(e.cfg.ModelsDir, d.Name()), func(p string, de os.DirEntry, err error) error {
+			if err != nil || de.IsDir() || !strings.HasSuffix(p, ".gguf") {
+				return nil
+			}
+			if f, err := os.Open(p); err == nil {
+				fadviseDontNeed(f, 0, 0) // length 0: to the end of the file
+				f.Close()
+			}
+			return nil
+		})
+	}
+}
+
 func fadviseDontNeed(f *os.File, off, n int64) {
 	const posixFadvDontneed = 4
 	_, _, _ = syscall.Syscall6(syscall.SYS_FADVISE64, f.Fd(), uintptr(off), uintptr(n), posixFadvDontneed, 0, 0)
@@ -915,6 +978,7 @@ func (e *Engine) monitor(ctx context.Context) {
 				res = pl.RAM.Weights
 			}
 		}
+		e.readingProgress(pid, pl, paths)
 		e.mu.Lock()
 		e.snapshot = snap
 		if e.placement != nil && e.placement == pl && res >= 0 {
@@ -934,6 +998,75 @@ func (e *Engine) monitor(ctx context.Context) {
 		case <-t.C:
 		}
 	}
+}
+
+// readingProgress shows the phase before llama.cpp reports progress: the
+// model files are mapped and read from the NVMe into the page cache. What
+// is read is the larger of the process's disk reads and the share of the
+// files already in the page cache (a warm cache is read at once).
+func (e *Engine) readingProgress(pid int, pl *Placement, paths []string) {
+	e.mu.Lock()
+	reading := e.status.State == Loading && e.status.Stage == "reading" && e.childProgress == 0 && pid > 0
+	e.mu.Unlock()
+	if !reading || pl == nil {
+		return
+	}
+	var whole []fileRange
+	for i, p := range paths {
+		if st, err := os.Stat(p); err == nil {
+			whole = append(whole, fileRange{file: i, start: 0, end: st.Size()})
+		}
+	}
+	done := resident(paths, whole)
+	if rb := readBytes(pid); rb > done {
+		done = rb
+	}
+	total := pl.FileBytes
+	if total <= 0 {
+		return
+	}
+	now := time.Now()
+	e.mu.Lock()
+	if !e.readPrevAt.IsZero() {
+		if dt := now.Sub(e.readPrevAt).Seconds(); dt > 0 {
+			inst := float64(done-e.readPrev) / dt
+			if inst >= 0 {
+				e.readRate = 0.5*e.readRate + 0.5*inst
+			}
+		}
+	}
+	e.readPrev, e.readPrevAt = done, now
+	rate := e.readRate
+	e.mu.Unlock()
+	frac := float64(done) / float64(total)
+	if frac > 0.99 {
+		frac = 0.99
+	}
+	msg := fmt.Sprintf("Reading the model from the NVMe · %s of %s", fmtGB(done), fmtGB(total))
+	if rate > 50<<20 {
+		msg += fmt.Sprintf(" · %.1f GB/s", rate/gb)
+	}
+	e.set(func(s *Status) {
+		if s.State == Loading && s.Stage == "reading" {
+			s.Progress = progress(frac)
+			s.Message = msg
+		}
+	})
+}
+
+// readBytes is what a process read from storage so far (/proc/<pid>/io).
+func readBytes(pid int) int64 {
+	b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/io")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if v, ok := strings.CutPrefix(line, "read_bytes: "); ok {
+			n, _ := strconv.ParseInt(strings.TrimSpace(v), 10, 64)
+			return n
+		}
+	}
+	return 0
 }
 
 func (e *Engine) detectVersion() {
