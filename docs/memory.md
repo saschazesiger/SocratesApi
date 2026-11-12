@@ -117,7 +117,9 @@ and also works while another model runs (it plans against the VRAM that model wo
 | Qwen3.8-Flash-Next UD-IQ3_XXS | 77.9 GB | experts of 31 of 48 layers in RAM (31 GB), 27 GB lookup table on the NVMe | ~28 tok/s | ~26 tok/s (short prompts, CPU-bound) |
 | Huihui Qwen3.6 35B-A3B abliterated MTP Q4_K | 21.7 GB | all on the GPU, 44k context, vision, MTP | ~200 tok/s | ~4 500 tok/s |
 | Huihui Qwen3.8 Flash-Next abliterated v2 UD-IQ4_XS | 93.7 GB | experts of 37 of 48 layers in RAM (43 GB), 29 GB lookup table on the NVMe, no vision, micro-batch 4096 | ~22 tok/s | ~430 tok/s (5.6k prompt) |
+| DeepSeek V4.1 Flash 1017 Uncensored GSQ-RCO IQ2_XXS | 138.6 GB + 110.6 GB Engram | 20 GB on the GPU, experts of 36 of 40 layers outside: ~44 GB in RAM, **~76 GB read from the NVMe**, Engram on the NVMe, micro-batch 4096 | 4.5–6 tok/s | ~55 tok/s (3.7k prompt) |
 | Qwen3-0.6B, converted, Q4_K_M | 0.5 GB | all on the GPU | ~470 tok/s | |
 
-> ⚠️ **DeepSeek-V4.1-Flash** (smallest GGUF 233 GB, ~120 GB needed in memory) does not fit a 24 GB + 64 GB
-> machine in a usable way: it would read most of its weights from the NVMe for every token.
+> 💡 **DeepSeek V4.1 Flash runs on 24 GB + 64 GB**, from the NVMe: about 5 tok/s once the page cache is warm (the
+> first answer after loading: ~2.7 tok/s), loading takes ~2.5 minutes. With small batches it is worse in both
+> directions (12 tok/s reading, 3 tok/s writing). Usable for questions that are worth the wait, not for agents.

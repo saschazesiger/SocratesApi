@@ -23,7 +23,7 @@ Pick any model on Hugging Face, see exactly where it lives (GPU, RAM, NVMe) and 
 
 > **Status: first release, 0.1.0.** Tested end to end on an RTX 3090 (24 GB), 64 GB RAM and a 2 TB NVMe with
 > Huihui Qwen3.8 27B, Qwen3.8-Flash-Next (78 GB MoE), a model converted from safetensors, the chat and opencode.
-> DeepSeek-V4.1-Flash does not fit such a machine in a usable way (see [Memory](docs/memory.md#-measured-on-an-rtx-3090-64-gb-ram-nvme)).
+> Even DeepSeek V4.1 Flash (250 GB) runs, at ~5 tok/s from the NVMe (see [Memory](docs/memory.md#-measured-on-an-rtx-3090-64-gb-ram-nvme)).
 
 ## ✨ Why Socrates API?
 
@@ -121,6 +121,7 @@ flowchart LR
 | Model on a 24 GB GPU + 64 GB RAM | Placement (automatic) | Measured |
 |---|---|---|
 | Huihui Qwen3.8 27B, UD-Q4_K_XL (17 GB) | all 65 layers on the GPU, 128k context, MTP | **~68 tok/s** writing, ~1 400 tok/s reading |
+| DeepSeek V4.1 Flash Uncensored, GSQ-RCO IQ2_XXS (250 GB MoE) | 20 GB on the GPU, 44 GB in RAM, ~76 GB and the 110 GB Engram tables on the NVMe | **~5 tok/s** writing, ~55 tok/s reading |
 | Huihui Qwen3.6 35B-A3B abliterated MTP, Q4_K (22 GB MoE) | all on the GPU, 44k context, vision, MTP | **~200 tok/s** writing, ~4 500 tok/s reading |
 | Huihui Qwen3.8 Flash-Next abliterated v2, UD-IQ4_XS (94 GB MoE) | experts of 37 layers (43 GB) in RAM, 29 GB lookup table on the NVMe | **~22 tok/s** writing, ~430 tok/s reading |
 | Qwen3.8-Flash-Next, UD-IQ3_XXS (78 GB MoE) | 48 layers on the GPU, experts of 31 layers (31 GB) in RAM, a 27 GB lookup table read from the NVMe | **~28 tok/s** writing |
