@@ -103,6 +103,10 @@ type Placement struct {
 	} `json:"ram"`
 	Disk struct {
 		Weights int64 `json:"weights"`
+		// Lookup tables (token embeddings, per-layer embeddings) in RAM's
+		// share of the file: only the rows of the tokens at hand are read,
+		// so they need not be in RAM and are not counted there.
+		Lookup int64 `json:"lookup"`
 	} `json:"disk"`
 	Notes []string `json:"notes"`
 
@@ -258,8 +262,8 @@ func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, ra
 		if d.name == "Host" {
 			pl.RAM.KV = d.ctx
 			pl.RAM.Compute = d.compute
-			if d.model > 0 {
-				pl.RAM.Weights = d.model
+			if d.model-pl.Disk.Lookup > 0 {
+				pl.RAM.Weights = d.model - pl.Disk.Lookup
 			}
 		} else {
 			pl.GPU.Weights += d.model
@@ -392,6 +396,10 @@ func placeTensors(f *gguf.File, m Meta, plan Plan) *Placement {
 			gpuLayers[layer] = true
 		}
 		if !onGPU {
+			if isLookup(t) {
+				pl.Disk.Lookup += t.Size
+				continue
+			}
 			pl.RAM.Weights += t.Size
 			pl.cpuRanges = appendRange(pl.cpuRanges, fileRange{file: t.File, start: t.Offset, end: t.Offset + t.Size})
 		}
@@ -401,6 +409,13 @@ func placeTensors(f *gguf.File, m Meta, plan Plan) *Placement {
 	pl.Layers.ExpertLayersOnCPU = len(expertCPULayers)
 	pl.Layers.MoE = m.MoE
 	return pl
+}
+
+// isLookup reports whether a tensor is an embedding table that is read row
+// by row (only the rows of the tokens at hand): large ones can stay on the
+// NVMe without slowing the model down much.
+func isLookup(t gguf.Tensor) bool {
+	return strings.Contains(t.Name, "token_embd") && t.Size > 1<<30
 }
 
 func appendRange(rs []fileRange, r fileRange) []fileRange {
@@ -623,8 +638,8 @@ func (p *Planner) MakeVirtual(ctx context.Context, paths []string, mmprojSize in
 	for _, d := range parseFitPrint(pout) {
 		if d.name == "Host" {
 			pl.RAM.KV, pl.RAM.Compute = d.ctx, d.compute
-			if d.model > 0 {
-				pl.RAM.Weights = d.model
+			if d.model-pl.Disk.Lookup > 0 {
+				pl.RAM.Weights = d.model - pl.Disk.Lookup
 			}
 		} else {
 			pl.GPU.Weights += d.model

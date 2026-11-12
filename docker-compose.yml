@@ -10,9 +10,9 @@ services:
     devices:
       - nvidia.com/gpu=all   # needs the NVIDIA Container Toolkit (CDI); see docs/quick-start.md
     ulimits:
-      memlock: -1            # lets the "mlock" load mode pin weights in RAM
+      memlock: -1
     cap_add:
-      - IPC_LOCK
+      - IPC_LOCK             # lets the "mlock" load mode pin weights in RAM
     shm_size: 1g
 
 volumes:

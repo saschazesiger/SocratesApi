@@ -790,8 +790,8 @@ func (e *Engine) measured(mem memoryReport, plan Plan) {
 		case "host":
 			pl.RAM.KV = d.Context
 			pl.RAM.Compute = d.Compute
-			if d.Model > 0 {
-				pl.RAM.Weights = d.Model
+			if d.Model-pl.Disk.Lookup > 0 {
+				pl.RAM.Weights = d.Model - pl.Disk.Lookup
 			}
 		}
 	}
