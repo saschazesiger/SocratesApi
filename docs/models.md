@@ -28,6 +28,12 @@ Gated or private models need a Hugging Face token: *API* → *Settings* → *Hug
 The model id (`huihui-qwen3.8-27b-abliterated-ud-q4_k_xl`) is what `/v1/models` reports. You can rename the model
 in its settings; the id stays.
 
+### 🧩 Shared parts (DeepSeek V4.1 Engram)
+
+Some repositories ship a file that several builds share, such as the 110 GB Engram lookup tables of DeepSeek
+V4.1 Flash, which llama.cpp opens as the last part (`…-00006-of-00006.gguf`) of every build. Socrates adds it to
+each build it completes, downloads it once per model and links it under the part name after the download.
+
 ## 🛠️ Converting safetensors
 
 A repository without GGUF files (for example `huihui-ai/Huihui-Qwen3.8-27B-abliterated` itself) shows the
