@@ -70,6 +70,7 @@ type Req struct {
 
 	phaseAt    time.Time
 	phaseStart int64 // tokens at the start of the phase, for the rate
+	streamed   bool  // the stream reports the progress; the slots are only a fallback
 }
 
 // Summary is the last finished request.
@@ -239,13 +240,24 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, body []byte, sou
 	}()
 
 	stream := false
-	if len(body) > 0 && strings.Contains(r.Header.Get("Content-Type"), "json") || (len(body) > 0 && body[0] == '{') {
-		var probe struct {
-			Stream bool   `json:"stream"`
-			Model  string `json:"model"`
+	strip := false
+	if len(body) > 0 && body[0] == '{' {
+		var probe map[string]json.RawMessage
+		if json.Unmarshal(body, &probe) == nil {
+			stream = string(probe["stream"]) == "true"
+			// For the live status, llama.cpp reports the prompt progress in
+			// the stream; for API clients those extra events are taken out
+			// again, so they see a plain OpenAI stream.
+			if stream && source == "api" && (r.URL.Path == "/v1/chat/completions" || r.URL.Path == "/v1/completions") {
+				if _, asked := probe["return_progress"]; !asked {
+					probe["return_progress"] = json.RawMessage("true")
+					if b, err := json.Marshal(probe); err == nil {
+						body = b
+						strip = true
+					}
+				}
+			}
 		}
-		_ = json.Unmarshal(body, &probe)
-		stream = probe.Stream
 	}
 
 	// Wait for the model while it loads, instead of failing.
@@ -313,7 +325,7 @@ func (p *Proxy) Forward(w http.ResponseWriter, r *http.Request, body []byte, sou
 	w.WriteHeader(resp.StatusCode)
 	var u usage
 	if isStream {
-		p.copyStream(w, resp.Body, id, &u)
+		p.copyStream(w, resp.Body, id, &u, strip)
 	} else {
 		b, _ := io.ReadAll(resp.Body)
 		_, _ = w.Write(b)
@@ -357,20 +369,39 @@ func errorText(b []byte) string {
 
 // copyStream passes server-sent events through line by line, flushing
 // each, and reads the progress and usage out of them on the way.
-func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader, id string, u *usage) {
+func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader, id string, u *usage, strip bool) {
 	flusher, _ := w.(http.Flusher)
 	br := bufio.NewReaderSize(body, 64<<10)
+	skipBlank := false
+	sentRole := false
 	for {
 		line, err := br.ReadBytes('\n')
 		if len(line) > 0 {
-			if _, werr := w.Write(line); werr != nil {
-				return
+			blank := len(bytes.TrimSpace(line)) == 0
+			data, isData := bytes.CutPrefix(line, []byte("data:"))
+			if isData {
+				data = bytes.TrimSpace(data)
+				p.chunk(id, data, u)
 			}
-			if len(bytes.TrimSpace(line)) == 0 && flusher != nil {
-				flusher.Flush()
+			drop := false
+			if strip && isData && bytes.Contains(data, []byte(`"prompt_progress"`)) && progressOnly(data) {
+				// The first of them is the usual role chunk; the repeats are ours.
+				drop = sentRole
+				sentRole = true
 			}
-			if data, ok := bytes.CutPrefix(line, []byte("data:")); ok {
-				p.chunk(id, bytes.TrimSpace(data), u)
+			switch {
+			case drop:
+				skipBlank = true
+			case blank && skipBlank:
+				skipBlank = false
+			default:
+				skipBlank = false
+				if _, werr := w.Write(line); werr != nil {
+					return
+				}
+				if blank && flusher != nil {
+					flusher.Flush()
+				}
 			}
 		}
 		if err != nil {
@@ -380,6 +411,31 @@ func (p *Proxy) copyStream(w http.ResponseWriter, body io.Reader, id string, u *
 			return
 		}
 	}
+}
+
+// progressOnly reports whether a stream chunk carries nothing but the prompt
+// progress (and the empty role delta).
+func progressOnly(data []byte) bool {
+	var c struct {
+		Choices []struct {
+			Delta map[string]json.RawMessage `json:"delta"`
+			Text  string                     `json:"text"`
+		} `json:"choices"`
+	}
+	if json.Unmarshal(data, &c) != nil {
+		return false
+	}
+	for _, ch := range c.Choices {
+		if ch.Text != "" {
+			return false
+		}
+		for k, v := range ch.Delta {
+			if k != "role" && string(v) != "null" && string(v) != `""` {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // chunk updates the live state of a request from one stream event.
@@ -416,6 +472,7 @@ func (p *Proxy) chunk(id string, data []byte, u *usage) {
 	if c.PromptProgress != nil {
 		p.mu.Lock()
 		if r := p.inflight[id]; r != nil {
+			r.streamed = true
 			if r.Phase != "prompt" {
 				r.Phase, r.phaseAt, r.phaseStart = "prompt", time.Now(), c.PromptProgress.Processed
 			}
@@ -633,11 +690,16 @@ func (p *Proxy) pollSlots() {
 		if len(s.NextToken) > 0 {
 			decoded = s.NextToken[0].NDecoded
 		}
-		if decoded == 0 && s.NPrompt > 0 && s.NPromptDone+s.NPromptCache < s.NPrompt {
+		if r.streamed {
+			continue
+		}
+		if decoded == 0 {
+			// While the prompt is read, n_prompt_tokens grows batch by batch:
+			// the total is not known here, only what was read so far.
 			if r.Phase != "prompt" {
 				r.Phase, r.phaseAt, r.phaseStart = "prompt", time.Now(), s.NPromptDone
 			}
-			r.PromptTokens = s.NPrompt
+			r.PromptTokens = 0
 			r.CachedTokens = s.NPromptCache
 			r.PromptDone = s.NPromptDone + s.NPromptCache
 			if dt := time.Since(r.phaseAt).Seconds(); dt > 0.5 {

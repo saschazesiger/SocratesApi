@@ -338,17 +338,28 @@ func bitsOf(q string) float64 {
 	return 0
 }
 
+func stemOf(name string) string {
+	base := path.Base(name)
+	base = splitRe.ReplaceAllString(base, ".gguf")
+	return strings.TrimSuffix(strings.TrimSuffix(base, ".gguf"), ".GGUF")
+}
+
+// groupVariants groups split files and names every variant by what tells
+// it apart from the others: the file name without the part all share
+// ("Huihui-Qwen3.8-27B-abliterated-UD-Q4_K_XL" becomes "UD-Q4_K_XL").
 func groupVariants(files []RepoFile) []Variant {
 	groups := map[string]*Variant{}
 	var order []string
 	for _, f := range files {
-		key := f.Name
-		if m := splitRe.FindStringSubmatch(f.Name); m != nil {
-			key = splitRe.ReplaceAllString(f.Name, "")
+		low := strings.ToLower(f.Name)
+		// Patches and tiny helper files are no models.
+		if strings.Contains(low, "patch") || (f.Size > 0 && f.Size < 50<<20) {
+			continue
 		}
+		key := splitRe.ReplaceAllString(f.Name, "")
 		v := groups[key]
 		if v == nil {
-			v = &Variant{Quant: QuantOf(f.Name)}
+			v = &Variant{Quant: stemOf(f.Name)}
 			groups[key] = v
 			order = append(order, key)
 		}
@@ -356,16 +367,53 @@ func groupVariants(files []RepoFile) []Variant {
 		v.FileInfo = append(v.FileInfo, f)
 		v.Size += f.Size
 	}
+	stems := make([]string, 0, len(order))
+	for _, k := range order {
+		stems = append(stems, groups[k].Quant)
+	}
+	cut := commonPrefix(stems)
 	out := make([]Variant, 0, len(order))
 	for _, k := range order {
 		v := groups[k]
 		sort.Strings(v.Files)
 		sort.Slice(v.FileInfo, func(i, j int) bool { return v.FileInfo[i].Name < v.FileInfo[j].Name })
-		v.Bits = bitsOf(v.Quant)
+		label := strings.Trim(v.Quant[cut:], "-_. ")
+		if label == "" {
+			label = v.Quant
+		}
+		v.Bits = bitsOf(QuantOf(v.Files[0]))
+		v.Quant = label
 		out = append(out, *v)
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Size < out[j].Size })
 	return out
+}
+
+// commonPrefix is the length of the prefix all names share, cut back to a
+// separator so no quant name is cut in half.
+func commonPrefix(names []string) int {
+	if len(names) < 2 {
+		// One file: drop everything before the quant.
+		if len(names) == 1 {
+			if m := quantRe.FindStringSubmatchIndex(names[0]); m != nil {
+				return m[2]
+			}
+		}
+		return 0
+	}
+	p := names[0]
+	for _, n := range names[1:] {
+		i := 0
+		for i < len(p) && i < len(n) && p[i] == n[i] {
+			i++
+		}
+		p = p[:i]
+	}
+	i := strings.LastIndexAny(p, "-_.")
+	if i < 0 {
+		return 0
+	}
+	return i + 1
 }
 
 // Machine is what the verdict per variant is based on.

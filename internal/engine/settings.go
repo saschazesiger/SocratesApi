@@ -10,7 +10,7 @@ import (
 // Settings are the per-model choices of the person. Zero values mean
 // "the default", so an empty object is a good start for any model.
 type Settings struct {
-	Context         int      `json:"context,omitempty"`   // tokens; 0 = default (32768 or less if the model is smaller); -1 = largest that fits
+	Context         int      `json:"context,omitempty"`   // tokens; 0 = automatic: as large as fits, between 32k and 128k
 	GPULayers       Auto     `json:"gpuLayers,omitempty"` // auto or a number
 	CPUMoE          Auto     `json:"cpuMoe,omitempty"`    // auto or a number of layers whose experts stay in RAM
 	KVType          string   `json:"kvType,omitempty"`    // f16, q8_0, q4_0
@@ -75,8 +75,8 @@ func ParseSettings(raw json.RawMessage) Settings {
 // with which field.
 func (s Settings) Validate() map[string]string {
 	errs := map[string]string{}
-	if s.Context < -1 || s.Context > 4<<20 {
-		errs["context"] = "Use a context between 512 and 4 194 304 tokens, or 0 for the default."
+	if s.Context < 0 || s.Context > 4<<20 {
+		errs["context"] = "Use a context between 512 and 4 194 304 tokens, or 0 for automatic."
 	} else if s.Context > 0 && s.Context < 512 {
 		errs["context"] = "Use at least 512 tokens."
 	}
@@ -175,12 +175,6 @@ func SplitArgs(s string) ([]string, error) {
 
 // withDefaults fills in what the person left open, for a model with meta.
 func (s Settings) withDefaults(m Meta) Settings {
-	if s.Context == 0 {
-		s.Context = 32768
-		if m.CtxTrain > 0 && int(m.CtxTrain) < s.Context {
-			s.Context = int(m.CtxTrain)
-		}
-	}
 	if s.KVType == "" {
 		s.KVType = "q8_0"
 	}

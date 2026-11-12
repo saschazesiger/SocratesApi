@@ -2,6 +2,7 @@
 # The llama.cpp build Socrates API runs on. Update both together: the
 # server image and the conversion scripts of the same build.
 ARG LLAMA_CPP_BUILD=b12316
+ARG LLAMA_CPP_COMMIT=5d4c8eeb24db049acf74bd6f354bed6eaeffc7dc
 
 FROM golang:1.27-alpine AS build
 WORKDIR /src
@@ -14,10 +15,10 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
 # Only the Python scripts of llama.cpp's converter (safetensors -> GGUF);
 # their packages are installed into /data the first time they are used.
 FROM alpine:3.22 AS convert
-ARG LLAMA_CPP_BUILD
+ARG LLAMA_CPP_COMMIT
 RUN apk add --no-cache curl tar \
  && mkdir -p /out /tmp/src \
- && curl -fsSL "https://github.com/ggml-org/llama.cpp/archive/refs/tags/${LLAMA_CPP_BUILD}.tar.gz" | tar -xz -C /tmp/src --strip-components=1 \
+ && curl -fsSL "https://github.com/ggml-org/llama.cpp/archive/${LLAMA_CPP_COMMIT}.tar.gz" | tar -xz -C /tmp/src --strip-components=1 \
  && cd /tmp/src && cp -r convert_hf_to_gguf.py conversion gguf-py requirements LICENSE /out/
 
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda12-${LLAMA_CPP_BUILD}

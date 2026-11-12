@@ -50,7 +50,7 @@ with a 4xx/5xx status. Times are Unix milliseconds, sizes are bytes.
       "id": "r12", "source": "chat",         // chat | api
       "key": "opencode",                     // API key name, "" for chat
       "phase": "prompt",                     // queued | prompt | thinking | generating
-      "promptTokens": 5120, "promptDone": 2048, "cachedTokens": 1024,
+      "promptTokens": 5120, "promptDone": 2048, "cachedTokens": 1024, // promptTokens 0 = total not known yet (non-streaming or Anthropic requests): show "2 048 tokens read so far"
       "generated": 0, "tps": 0,              // tokens per second of the current phase
       "startedAt": 1731400000000 } ],
     "last": { "promptTokens": 812, "cachedTokens": 0, "completionTokens": 233, "promptTps": 1450.2, "genTps": 38.5, "ms": 6600, "at": 1731400000000 }
@@ -98,7 +98,7 @@ A **Model** as returned by the server:
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `context` | int | 32768 | context size in tokens (0 = largest that fits) |
+| `context` | int | 0 | context size in tokens; 0 = automatic: as large as fits on the GPU, between 32k and 128k (never below 32k: weights move to RAM first) |
 | `gpuLayers` | `"auto"` or int | auto | layers on the GPU |
 | `cpuMoe` | `"auto"` or int | auto | MoE: layers whose experts stay in RAM |
 | `kvType` | `f16`,`q8_0`,`q4_0` | q8_0 | KV cache precision |

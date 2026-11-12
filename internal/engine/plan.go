@@ -144,11 +144,7 @@ var fitOut = regexp.MustCompile(`-c (\d+) -ngl (-?\d+)(?: -ts [\d,]+)?(?: -ot "(
 // baseArgs are the model and memory flags shared by fit-params and the server.
 func baseArgs(paths []string, s Settings, m Meta) []string {
 	a := []string{"-m", paths[0]}
-	ctx := s.Context
-	if ctx < 0 {
-		ctx = 0 // the largest that fits
-	}
-	a = append(a, "-c", strconv.Itoa(ctx))
+	a = append(a, "-c", strconv.Itoa(max(s.Context, 0))) // 0: the fit picks the largest that fits
 	if s.GPULayers.Set {
 		a = append(a, "-ngl", strconv.Itoa(s.GPULayers.Value))
 	}
@@ -169,6 +165,18 @@ func baseArgs(paths []string, s Settings, m Meta) []string {
 		a = append(a, "-t", strconv.Itoa(s.Threads))
 	}
 	return a
+}
+
+const (
+	minAutoCtx = 32768
+	maxAutoCtx = 131072
+)
+
+func minCtx(m Meta) int {
+	if m.CtxTrain > 0 && m.CtxTrain < minAutoCtx {
+		return int(m.CtxTrain)
+	}
+	return minAutoCtx
 }
 
 // extraVRAM is what the fit of fit-params does not know about but the
@@ -192,16 +200,35 @@ func (p *Planner) Make(ctx context.Context, paths []string, mmprojSize int64, ra
 	plan := Plan{}
 	reserve := int64(s.GPUReserveMB)<<20 + extraVRAM(s, m, mmprojSize)
 
-	args := append([]string{"fit-params"}, baseArgs(paths, s, m)...)
-	args = append(args, "--fit-target", strconv.FormatInt(reserve>>20, 10))
-	out, err := p.run(ctx, args)
+	fit := func(s Settings) ([]string, error) {
+		args := append([]string{"fit-params"}, baseArgs(paths, s, m)...)
+		args = append(args, "--fit-target", strconv.FormatInt(reserve>>20, 10))
+		if s.Context == 0 {
+			// Automatic context: the fit gives up context before it moves
+			// weights off the GPU, but never below this.
+			args = append(args, "--fit-ctx", strconv.Itoa(minCtx(m)))
+		}
+		out, err := p.run(ctx, args)
+		if err != nil {
+			return nil, err
+		}
+		g := fitOut.FindStringSubmatch(out)
+		if g == nil {
+			return nil, errors.New("llama.cpp did not find a placement: " + lastLine(out))
+		}
+		return g, nil
+	}
+	g, err := fit(s)
+	if err == nil && s.Context == 0 {
+		// A context larger than 128k mostly costs memory; use it when asked for.
+		if n, _ := strconv.Atoi(g[1]); n > maxAutoCtx {
+			s2 := s
+			s2.Context = maxAutoCtx
+			g, err = fit(s2)
+		}
+	}
 	if err != nil {
 		plan.Error = err.Error()
-		return plan
-	}
-	g := fitOut.FindStringSubmatch(out)
-	if g == nil {
-		plan.Error = "llama.cpp did not find a placement: " + lastLine(out)
 		return plan
 	}
 	plan.Ctx, _ = strconv.Atoi(g[1])

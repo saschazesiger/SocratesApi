@@ -1,0 +1,27 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - name: Vendored Z-Dash is untouched
+        run: sh web/vendor/z-dash/tools/verify.sh web/vendor/z-dash
+      - name: Interface follows the Z-Dash project rules
+        run: node web/vendor/z-dash/tools/check-project.mjs --config web/ds-check.json
+      - run: go vet ./...
+      - run: go test -race ./...
