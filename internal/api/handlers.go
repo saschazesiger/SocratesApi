@@ -216,7 +216,11 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 			writeError(w, 400, fmt.Sprintf("%s is not a GGUF file of %s.", name, repoID))
 			return
 		}
-		files = append(files, store.File{Path: f.Name, Size: f.Size, SHA256: f.SHA256})
+		kind := ""
+		if hf.IsShared(name) && len(req.Files) > 1 {
+			kind = "shared" // linked as the missing part once downloaded
+		}
+		files = append(files, store.File{Path: f.Name, Size: f.Size, SHA256: f.SHA256, Kind: kind})
 		jobFiles = append(jobFiles, f)
 		total += f.Size
 	}
@@ -305,6 +309,11 @@ func (s *Server) downloadDone(j hf.Job, err error) {
 // finishModel reads the metadata of a model whose files are complete and
 // makes it the active one if none is.
 func (s *Server) finishModel(m store.Model) {
+	if err := s.linkShared(&m); err != nil {
+		_ = s.d.Store.SetModelState(m.ID, "failed", "Linking the shared part failed: "+err.Error())
+		s.hub.notify("models")
+		return
+	}
 	meta, err := s.d.Engine.ModelMeta(m)
 	if err != nil {
 		_ = s.d.Store.SetModelState(m.ID, "failed", "The downloaded file cannot be read: "+err.Error())
@@ -326,6 +335,57 @@ func (s *Server) finishModel(m store.Model) {
 		s.d.Engine.Reconcile()
 	}
 	s.hub.notify("models")
+}
+
+// linkShared links a shared file (the Engram tables of DeepSeek V4.1) as
+// the part a split build is missing, as llama.cpp expects it.
+func (s *Server) linkShared(m *store.Model) error {
+	var shared *store.File
+	parts := map[int]bool{}
+	first := ""
+	total := 0
+	for i := range m.Files {
+		f := &m.Files[i]
+		switch f.Kind {
+		case "shared":
+			shared = f
+		case "":
+			if p, n := hf.SplitParts(f.Path); n > 0 {
+				parts[p] = true
+				total = n
+				if p == 1 {
+					first = f.Path
+				}
+			}
+		}
+	}
+	if shared == nil || first == "" {
+		return nil
+	}
+	dir := s.d.Engine.ModelDir(m.ID)
+	for p := 1; p <= total; p++ {
+		if parts[p] {
+			continue
+		}
+		name := strings.Replace(first, fmt.Sprintf("-%05d-of-%05d.gguf", 1, total), fmt.Sprintf("-%05d-of-%05d.gguf", p, total), 1)
+		link := filepath.Join(dir, filepath.FromSlash(name))
+		target, err := filepath.Rel(filepath.Dir(link), filepath.Join(dir, filepath.FromSlash(shared.Path)))
+		if err != nil {
+			return err
+		}
+		_ = os.Remove(link)
+		if err := os.Symlink(target, link); err != nil {
+			return err
+		}
+		m.Files = append(m.Files, store.File{Path: name, Size: shared.Size})
+	}
+	sort.SliceStable(m.Files, func(i, j int) bool {
+		if (m.Files[i].Kind == "") != (m.Files[j].Kind == "") {
+			return m.Files[i].Kind == ""
+		}
+		return m.Files[i].Path < m.Files[j].Path
+	})
+	return nil
 }
 
 func (s *Server) convertDone(m store.Model, err error) {

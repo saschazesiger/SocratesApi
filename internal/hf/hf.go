@@ -381,6 +381,7 @@ func groupVariants(files []RepoFile) []Variant {
 		v.FileInfo = append(v.FileInfo, f)
 		v.Size += f.Size
 	}
+	attachShared(groups, &order)
 	stems := make([]string, 0, len(order))
 	for _, k := range order {
 		stems = append(stems, groups[k].Quant)
@@ -411,6 +412,60 @@ func groupVariants(files []RepoFile) []Variant {
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].Size < out[j].Size })
 	return out
+}
+
+// SplitParts reads "-00002-of-00006.gguf": part 2 of 6; 0, 0 for other names.
+func SplitParts(name string) (part, total int) {
+	m := splitRe.FindStringSubmatch(name)
+	if m == nil {
+		return 0, 0
+	}
+	fmt.Sscan(m[1], &part)
+	fmt.Sscan(m[2], &total)
+	return part, total
+}
+
+// IsShared reports whether a file is a part that several builds share
+// (the Engram lookup tables of DeepSeek V4.1: one file that llama.cpp
+// opens as the last part of every build).
+func IsShared(name string) bool {
+	low := strings.ToLower(path.Base(name))
+	return strings.Contains(low, "engram") && !splitRe.MatchString(name)
+}
+
+// attachShared adds a shared file to the split builds it completes and
+// drops it as a variant of its own.
+func attachShared(groups map[string]*Variant, order *[]string) {
+	var shared []string
+	for _, k := range *order {
+		if v := groups[k]; len(v.Files) == 1 && IsShared(v.Files[0]) {
+			shared = append(shared, k)
+		}
+	}
+	if len(shared) != 1 {
+		return
+	}
+	sv := groups[shared[0]]
+	used := false
+	for _, k := range *order {
+		v := groups[k]
+		_, total := SplitParts(v.Files[0])
+		if total > 0 && len(v.Files) == total-1 {
+			v.Files = append(v.Files, sv.Files[0])
+			v.FileInfo = append(v.FileInfo, sv.FileInfo...)
+			v.Size += sv.Size
+			used = true
+		}
+	}
+	if used {
+		out := (*order)[:0]
+		for _, k := range *order {
+			if k != shared[0] {
+				out = append(out, k)
+			}
+		}
+		*order = out
+	}
 }
 
 // commonPrefix is the length of the prefix all names share, cut back to a

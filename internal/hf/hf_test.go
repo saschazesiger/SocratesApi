@@ -82,3 +82,15 @@ func TestDuplicateLabels(t *testing.T) {
 		t.Fatalf("labels %v", labels)
 	}
 }
+
+func TestSharedEngramShard(t *testing.T) {
+	vs := groupVariants([]RepoFile{
+		{Name: "DS-1017-IQ2_XXS-00001-of-00004.gguf", Size: 10 << 20},
+		{Name: "DS-1017-IQ2_XXS-00002-of-00004.gguf", Size: 40 << 30},
+		{Name: "DS-1017-IQ2_XXS-00003-of-00004.gguf", Size: 40 << 30},
+		{Name: "DS-Engram-IQ4_NL.gguf", Size: 110 << 30},
+	})
+	if len(vs) != 1 || len(vs[0].Files) != 4 || vs[0].Files[3] != "DS-Engram-IQ4_NL.gguf" {
+		t.Fatalf("got %+v", vs)
+	}
+}
