@@ -51,7 +51,9 @@ model filled in:
       "models": {
         "huihui-qwen3.8-27b-abliterated-ud-q4_k_xl": {
           "name": "Huihui Qwen3.8 27B",
-          "limit": { "context": 130560, "output": 32768 }
+          "limit": { "context": 130560, "output": 32768 },
+          "attachment": true,
+          "modalities": { "input": ["text", "image"], "output": ["text"] }
         }
       }
     }
@@ -65,7 +67,9 @@ export SOCRATES_API_KEY=sk-soc-...
 opencode
 ```
 
-`limit.context` lets opencode compact the conversation before it outgrows the model's context. In scripts, close
+`limit.context` lets opencode compact the conversation before it outgrows the model's context. `attachment` and
+`modalities` are only for models with a vision projector: without them opencode treats the model as text-only and
+answers images with "this model does not support image input"; the API page adds them when the projector is loaded. In scripts, close
 stdin for `opencode run` (`opencode run "…" < /dev/null`), otherwise it waits for input before sending anything. Tested: opencode
 1.19 writes and runs files with tool calls against Qwen3.8 27B.
 

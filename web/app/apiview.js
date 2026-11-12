@@ -28,6 +28,7 @@ function snippets(d) {
   const e = (ctx.status && ctx.status.engine) || {};
   const id = e.modelId || 'MODEL_ID';
   const name = e.modelName || 'Socrates model';
+  const vision = (e.args || []).includes('--mmproj');
   return [
     ['opencode', 'opencode.json', 'json', JSON.stringify({
       $schema: 'https://opencode.ai/config.json',
@@ -37,7 +38,9 @@ function snippets(d) {
           name: 'Socrates API',
           options: { baseURL: base, apiKey: '{env:SOCRATES_API_KEY}' },
           // opencode compacts the conversation before it outgrows the context.
-          models: { [id]: { name, limit: { context: e.ctx || 32768, output: Math.min(32768, Math.floor((e.ctx || 32768) / 2)) } } },
+          models: { [id]: { name, limit: { context: e.ctx || 32768, output: Math.min(32768, Math.floor((e.ctx || 32768) / 2)) },
+            // opencode treats custom models as text-only and drops images unless told otherwise.
+            ...(vision ? { attachment: true, modalities: { input: ['text', 'image'], output: ['text'] } } : {}) } },
         },
       },
       model: `socrates/${id}`,
