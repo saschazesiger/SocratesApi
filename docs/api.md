@@ -8,6 +8,10 @@ The model API is OpenAI- and Anthropic-compatible and lives on the same port as 
 | **Key** | `Authorization: Bearer sk-soc-…`, or `x-api-key: sk-soc-…` |
 | **Model** | any name: requests always go to the active model. `GET /v1/models` names it. |
 
+Clients may call it by any host name (no host-name check on `/v1` and `/health`); keys protect it. Through the
+Cloudflare tunnel of *Settings* → *Remote access*, every path needs the Cloudflare Access login, `/v1` included, so
+API clients use the local address (or a VPN).
+
 ## 🔑 API keys
 
 *API* → **Create a key**, give it the name of the app (`opencode`, `laptop`). The key is shown **once**; Socrates

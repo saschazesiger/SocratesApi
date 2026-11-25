@@ -38,6 +38,7 @@ Pick any model on Hugging Face, see exactly where it lives (GPU, RAM, NVMe) and 
 | 🔌 **Standard API** | `/v1/chat/completions`, `/v1/completions`, `/v1/models`, `/v1/embeddings`, `/v1/messages` (Anthropic). Tools, streaming, reasoning. Works with opencode, the OpenAI and Anthropic SDKs. |
 | 🔑 **API keys** | One key per app, revoke any time, usage per key, every request in a log. |
 | 🛠️ **No GGUF? Convert it** | For repositories with only safetensors, Socrates downloads, converts and quantises them for you. |
+| 🌐 **Remote access, built in** | *Settings* → *Remote access* sets up a Cloudflare tunnel with a login by e-mail (Cloudflare Access): the interface from anywhere, no open port. |
 | 📦 **One container** | One Go binary next to llama.cpp, all state in one volume. No database server, no Python unless you convert. |
 
 ## ⚡ Quick start
@@ -163,8 +164,9 @@ of failing. Ready-made setups for opencode, the OpenAI SDK and Anthropic clients
 ## 🔒 Security
 
 Socrates API is made for **your local network**. The interface is protected by the admin password, the API by API
-keys (on by default). Do not publish port 8080 on the internet; put a reverse proxy with TLS in front if you must.
-Details: [Security](docs/security.md).
+keys (on by default). Do not publish port 8080 on the internet: for the interface away from home, set up the
+Cloudflare tunnel under *Settings* (Cloudflare Access signs people in by e-mail), or use a VPN. Details:
+[Security](docs/security.md).
 
 ## 📚 Documentation
 
@@ -175,7 +177,7 @@ Details: [Security](docs/security.md).
 | 🧠 [Memory and offloading](docs/memory.md) | How the placement is planned, MoE, mmap / mlock / RAM, reading the bars |
 | 🔌 [API](docs/api.md) | Endpoints, keys, opencode, OpenAI and Anthropic SDKs |
 | 🔧 [Configuration](docs/configuration.md) | Environment variables, the data volume, updates, backup |
-| 🔒 [Security](docs/security.md) | Password, keys, what to expose |
+| 🔒 [Security](docs/security.md) | Password, keys, remote access, what to expose |
 | 🩺 [Troubleshooting](docs/troubleshooting.md) | Symptoms, causes and fixes |
 | 🛠️ [Development](docs/development.md) | Layout, build, tests, the mock server, screenshots |
 
@@ -193,5 +195,5 @@ Rules for changes are in [AGENTS.md](AGENTS.md); everything else in [Development
 MIT, see [LICENSE](LICENSE). Socrates API stands on:
 
 - [llama.cpp](https://github.com/ggml-org/llama.cpp) for inference, the fit and the conversion (MIT, the official CUDA image is the base).
-- [Z-Dash](https://github.com/saschazesiger/Z-Dash) for the whole interface (MIT, vendored).
+- [Z-Dash](https://github.com/saschazesiger/Z-Dash) for the whole interface and its server: sign-in, guards, live updates, the Cloudflare tunnel (MIT, the Go module `github.com/saschazesiger/Z-Dash/server`).
 - [Hugging Face Hub](https://huggingface.co) for models.

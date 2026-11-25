@@ -58,6 +58,10 @@ signed in.
 Forgot it later? Start the container once with `-e SOCRATES_ADMIN_PASSWORD=<new password>`; that signs everybody
 out. Remove the variable afterwards.
 
+Away from home? *Settings* → *Remote access* sets up a Cloudflare tunnel with a Cloudflare API token: an address
+such as `https://socrates.example.com`, a login by e-mail (Cloudflare Access) for the addresses you list, no open
+port. The local address and the password keep working.
+
 ## 🤗 4. Add a model
 
 *Models* → **Add a model**.

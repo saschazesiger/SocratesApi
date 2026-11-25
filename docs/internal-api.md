@@ -1,27 +1,30 @@
 # 🔌 Internal API (interface ↔ server)
 
 The web interface talks to the Go server over JSON under `/api/`. This is **not** the public model API (that is
-`/v1/*`, see [API](api.md)). Everything here needs the admin session cookie; every request that is not `GET` must
-carry the header `X-Socrates: 1` (CSRF guard). Errors come as `{"error": "text for the user", "fields": {"name": "text"}}`
+`/v1/*`, see [API](api.md)). Socrates API runs on the [Z-Dash server](https://github.com/saschazesiger/Z-Dash/blob/main/docs/server.md),
+which owns the session routes and the change notices below. Everything here needs a session (the admin password on
+the local address, Cloudflare Access through the tunnel); every request that is not `GET` must carry the header
+`X-Z-Dash: 1` (CSRF guard; the shell's `api.js` sends it). Errors come as `{"error": "text for the user", "fields": {"name": "text"}}`
 with a 4xx/5xx status. Times are Unix milliseconds, sizes are bytes.
 
-## 🔐 Session
+## 🔐 Session (the Z-Dash server)
 
 | Method | Path | Body | Answer |
 |---|---|---|---|
-| GET | `/api/session` | | `{signedIn, needsPassword, version}` (no auth needed) |
-| POST | `/api/setup` | `{password}` | first start only: sets the admin password and signs in |
+| GET | `/api/session` | | `{name, version, env, signedIn, needsPassword, via, email, open, tunnel, logout}` (no auth needed) |
+| POST | `/api/setup/password` | `{password}` | first start only: sets the admin password and signs in |
 | POST | `/api/login` | `{password}` | `{signedIn: true}` |
-| POST | `/api/logout` | | |
-| POST | `/api/password` | `{current, password}` | `{message}` |
+| POST | `/api/logout` | | `{next}`: Cloudflare Access's logout through the tunnel |
+| POST | `/api/password` | `{current, password}` | `{message}`; signs every other browser out |
+| | `/api/cloudflare` … | | the tunnel's settings, drawn by the shell's `mountTunnel` |
 
-## 📡 Live updates: `GET /api/events` (server-sent events)
+## 📡 Live updates (server-sent events)
 
-| Event | Data | When |
-|---|---|---|
-| `status` | the full [Status](#-status) object | on every change, at most 4 per second, and every 2 s while anything is busy |
-| `change` | `{topics: ["models", "keys", "requests", "settings"]}` | something the page lists changed: refetch it |
-| `log` | `{lines: ["..."]}` | new lines of the engine log (llama-server output) |
+| Stream | Event | Data | When |
+|---|---|---|---|
+| `GET /api/events` (the server's) | `change` | `{topics: ["models", "keys", "requests", "settings"]}` | something the page lists changed: refetch it (the shell's `on(topic)`) |
+| `GET /api/stream` | `status` | the full [Status](#-status) object | on every change, at most 4 per second, and every 2 s while anything is busy |
+| `GET /api/stream` | `log` | `{lines: ["..."]}` | new lines of the engine log (llama-server output) |
 
 ## 🩺 Status
 

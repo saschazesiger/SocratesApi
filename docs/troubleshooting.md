@@ -12,6 +12,8 @@
 | *mlock* fails to start | not enough RAM, or no `IPC_LOCK` | use mmap, or start with the compose file |
 | The interface says it does not know the host name | DNS-rebinding protection | add the name to `SOCRATES_HOSTS` |
 | Forgot the admin password | | start once with `SOCRATES_ADMIN_PASSWORD=…` |
+| The tunnel stays at *Connecting* or *Problem* | `cloudflared` cannot reach Cloudflare, or a DNS record or Access application was changed by hand | *Settings* → *Remote access* shows the step and the `cloudflared` log; *Repair* sets up what is missing |
+| "Forbidden: sign in through Cloudflare Access" | the address is not on the list of who may sign in | add it under *Settings* → *Remote access* |
 
 **The engine log** (*Models* → *Engine log*, or the chat's *Engine log*) shows llama-server's output live, with
 Socrates's own steps marked `── socrates:`. The full command line is under *Command line* on the Models page:
