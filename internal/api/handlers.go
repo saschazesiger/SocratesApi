@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/saschazesiger/Z-Dash/server"
+
 	"github.com/saschazesiger/SocratesApi/internal/convert"
 	"github.com/saschazesiger/SocratesApi/internal/engine"
 	"github.com/saschazesiger/SocratesApi/internal/hf"
@@ -106,7 +108,7 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.hub.notify("settings")
+	s.notify("settings")
 	s.getSettings(w, r)
 }
 
@@ -255,7 +257,7 @@ func (s *Server) addModel(w http.ResponseWriter, r *http.Request) {
 	}
 	s.d.Downloader.Add(hf.Job{ModelID: id, Repo: repoID, Revision: "main", Dir: s.d.Engine.ModelDir(id), Files: jobFiles})
 	s.d.Logf("model %s: downloading %s from %s", id, strings.Join(req.Files, ", "), repoID)
-	s.hub.notify("models")
+	s.notify("models")
 	m, _ = s.d.Store.Model(id)
 	writeJSON(w, 200, s.view(m, s.d.Engine.ActiveID()))
 }
@@ -300,7 +302,7 @@ func (s *Server) downloadDone(j hf.Job, err error) {
 	if err != nil {
 		s.d.Logf("model %s: download failed: %v", m.ID, err)
 		_ = s.d.Store.SetModelState(m.ID, "failed", "Download failed: "+err.Error())
-		s.hub.notify("models")
+		s.notify("models")
 		return
 	}
 	s.finishModel(m)
@@ -311,13 +313,13 @@ func (s *Server) downloadDone(j hf.Job, err error) {
 func (s *Server) finishModel(m store.Model) {
 	if err := s.linkShared(&m); err != nil {
 		_ = s.d.Store.SetModelState(m.ID, "failed", "Linking the shared part failed: "+err.Error())
-		s.hub.notify("models")
+		s.notify("models")
 		return
 	}
 	meta, err := s.d.Engine.ModelMeta(m)
 	if err != nil {
 		_ = s.d.Store.SetModelState(m.ID, "failed", "The downloaded file cannot be read: "+err.Error())
-		s.hub.notify("models")
+		s.notify("models")
 		return
 	}
 	b, _ := json.Marshal(meta)
@@ -334,7 +336,7 @@ func (s *Server) finishModel(m store.Model) {
 	} else {
 		s.d.Engine.Reconcile()
 	}
-	s.hub.notify("models")
+	s.notify("models")
 }
 
 // linkShared links a shared file (the Engram tables of DeepSeek V4.1) as
@@ -391,7 +393,7 @@ func (s *Server) linkShared(m *store.Model) error {
 func (s *Server) convertDone(m store.Model, err error) {
 	if err != nil {
 		_ = s.d.Store.SetModelState(m.ID, "failed", err.Error())
-		s.hub.notify("models")
+		s.notify("models")
 		return
 	}
 	s.finishModel(m)
@@ -447,7 +449,7 @@ func (s *Server) editModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.d.Engine.Reconcile()
-	s.hub.notify("models")
+	s.notify("models")
 	m, _ = s.d.Store.Model(m.ID)
 	writeJSON(w, 200, s.view(m, s.d.Engine.ActiveID()))
 }
@@ -480,7 +482,7 @@ func (s *Server) deleteModel(w http.ResponseWriter, r *http.Request) {
 		}()
 	}
 	s.d.Logf("model %s deleted", m.ID)
-	s.hub.notify("models")
+	s.notify("models")
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -497,7 +499,7 @@ func (s *Server) activateModel(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.hub.notify("models")
+	s.notify("models")
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -543,7 +545,7 @@ func (s *Server) retryModel(w http.ResponseWriter, r *http.Request) {
 		_ = s.d.Store.SetModelState(m.ID, "downloading", "")
 		s.d.Downloader.Add(s.jobOf(m))
 	}
-	s.hub.notify("models")
+	s.notify("models")
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -552,7 +554,7 @@ func (s *Server) stopEngine(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.hub.notify("models")
+	s.notify("models")
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -617,7 +619,7 @@ func (s *Server) convertModel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.d.Converter.Start(m, repo)
-	s.hub.notify("models")
+	s.notify("models")
 	writeJSON(w, 200, s.view(m, s.d.Engine.ActiveID()))
 }
 
@@ -715,12 +717,14 @@ func newSecret() string {
 	return b.String()
 }
 
+// baseURL is the API's address as the browser reaches Socrates API: https
+// through the tunnel or behind a proxy that says so.
 func baseURL(r *http.Request) string {
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
+	origin := server.Origin(r)
+	if r.Header.Get("X-Forwarded-Proto") == "https" {
+		origin = "https://" + r.Host
 	}
-	return scheme + "://" + r.Host + "/v1"
+	return origin + "/v1"
 }
 
 func (s *Server) listKeys(w http.ResponseWriter, r *http.Request) {
@@ -750,7 +754,7 @@ func (s *Server) addKey(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.hub.notify("keys")
+	s.notify("keys")
 	writeJSON(w, 200, map[string]any{"key": k, "secret": secret})
 }
 
@@ -768,7 +772,7 @@ func (s *Server) deleteKey(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, err)
 		return
 	}
-	s.hub.notify("keys")
+	s.notify("keys")
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
 

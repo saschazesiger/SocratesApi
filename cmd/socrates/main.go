@@ -5,7 +5,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -18,6 +17,9 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/saschazesiger/Z-Dash/server"
+	"github.com/saschazesiger/Z-Dash/server/secret"
+
 	"github.com/saschazesiger/SocratesApi/internal/api"
 	"github.com/saschazesiger/SocratesApi/internal/convert"
 	"github.com/saschazesiger/SocratesApi/internal/engine"
@@ -25,6 +27,7 @@ import (
 	"github.com/saschazesiger/SocratesApi/internal/proxy"
 	"github.com/saschazesiger/SocratesApi/internal/store"
 	"github.com/saschazesiger/SocratesApi/internal/sysinfo"
+	"github.com/saschazesiger/SocratesApi/web"
 )
 
 var version = "dev"
@@ -102,16 +105,38 @@ func main() {
 		}
 	}
 
-	var hosts []string
-	for _, h := range strings.Split(os.Getenv("SOCRATES_HOSTS"), ",") {
-		if h = strings.TrimSpace(h); h != "" {
-			hosts = append(hosts, h)
-		}
+	// The server keeps its state (the admin password, the sessions, the
+	// tunnel) in Socrates' own database, under the keys Socrates used
+	// before, and seals the tunnel's token with secret.key (or
+	// SOCRATES_SECRET_KEY).
+	sealer, err := secret.Load(dataDir, os.Getenv("SOCRATES_SECRET_KEY"))
+	if err != nil {
+		logger.Fatalf("secret key: %v", err)
+	}
+	// SOCRATES_LISTEN wins; else SOCRATES_HOST and SOCRATES_PORT, as before.
+	listen := ""
+	if os.Getenv("SOCRATES_LISTEN") == "" {
+		listen = net.JoinHostPort(env("SOCRATES_HOST", ""), port)
+	}
+	app, err := server.New(server.Config{
+		// The slug keeps the cookie (socrates_session) and the environment
+		// prefix (SOCRATES_) of earlier versions.
+		Name:    "Socrates API",
+		Slug:    "socrates",
+		Version: version,
+		DataDir: dataDir,
+		Listen:  listen,
+		Assets:  web.FS,
+		KV:      store.ServerKV{St: st},
+		Sealer:  sealer,
+		Logf:    logf,
+	})
+	if err != nil {
+		logger.Fatalf("%v", err)
 	}
 	srv = api.New(api.Deps{
-		Store: st, Engine: eng, Proxy: px, HF: hfc, Downloader: dl, Converter: conv,
-		Version: version, ModelsDir: modelsDir, ResetPassword: os.Getenv("SOCRATES_ADMIN_PASSWORD"),
-		Hosts: hosts, Logf: logf,
+		App: app, Store: st, Engine: eng, Proxy: px, HF: hfc, Downloader: dl, Converter: conv,
+		Version: version, ModelsDir: modelsDir, Logf: logf,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -123,20 +148,9 @@ func main() {
 	go conv.Run(ctx)
 	go srv.Run(ctx)
 
-	httpSrv := &http.Server{
-		Addr:              net.JoinHostPort(env("SOCRATES_HOST", ""), port),
-		Handler:           srv.Handler(),
-		ReadHeaderTimeout: 20 * time.Second,
-	}
-	go func() {
-		<-ctx.Done()
-		sctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = httpSrv.Shutdown(sctx)
-	}()
 	logf("Socrates API %s: open http://<this machine>:%s in a browser (the first visitor sets the admin password)", version, port)
-	if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-		logger.Fatalf("listen on %s: %v", httpSrv.Addr, err)
+	if err := app.Run(ctx); err != nil {
+		logger.Fatalf("%v", err)
 	}
 	<-engineDone
 }

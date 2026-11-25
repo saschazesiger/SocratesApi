@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"sort"
 	"sync"
 	"time"
 )
@@ -13,8 +12,9 @@ import (
 // writes, so a burst of changes is one message (at most 4 per second).
 const coalesce = 250 * time.Millisecond
 
-// hub fans changes out to the open event streams: topics to refetch, the
-// live status, and new engine log lines.
+// hub fans changes out to the open status streams: the live status and new
+// engine log lines. The lists the page refetches (models, keys ...) are
+// the Z-Dash server's change notices (App.Notify), on its own stream.
 type hub struct {
 	mu      sync.Mutex
 	clients map[*streamClient]struct{}
@@ -24,7 +24,6 @@ type hub struct {
 type streamClient struct {
 	wake   chan struct{}
 	mu     sync.Mutex
-	topics map[string]bool
 	status bool
 	logs   []string
 	done   chan struct{}
@@ -46,14 +45,6 @@ func (h *hub) each(fn func(c *streamClient)) {
 	}
 }
 
-func (h *hub) notify(topics ...string) {
-	h.each(func(c *streamClient) {
-		for _, t := range topics {
-			c.topics[t] = true
-		}
-	})
-}
-
 func (h *hub) statusChanged() { h.each(func(c *streamClient) { c.status = true }) }
 
 func (h *hub) log(lines []string) {
@@ -66,7 +57,7 @@ func (h *hub) log(lines []string) {
 }
 
 func (h *hub) add() *streamClient {
-	c := &streamClient{wake: make(chan struct{}, 1), topics: map[string]bool{}, status: true, done: make(chan struct{})}
+	c := &streamClient{wake: make(chan struct{}, 1), status: true, done: make(chan struct{})}
 	h.mu.Lock()
 	if h.closed {
 		close(c.done)
@@ -96,20 +87,17 @@ func (h *hub) close() {
 	}
 }
 
-func (c *streamClient) take() (topics []string, status bool, logs []string) {
+func (c *streamClient) take() (status bool, logs []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for t := range c.topics {
-		topics = append(topics, t)
-	}
-	sort.Strings(topics)
-	c.topics = map[string]bool{}
 	status, c.status = c.status, false
 	logs, c.logs = c.logs, nil
 	return
 }
 
-// events is the server-sent event stream of the interface.
+// events is the interface's stream of the live status ("status", the
+// whole status object) and the engine log ("log", new lines), at
+// /api/stream.
 func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -145,7 +133,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-c.done:
 			return
 		case <-ping.C:
-			if !s.auth.check(r) {
+			if !s.d.App.SignedIn(r) {
 				return // signed out elsewhere (password changed)
 			}
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
@@ -160,11 +148,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			case <-c.done:
 				return
 			}
-			topics, status, logs := c.take()
+			status, logs := c.take()
 			if status && !write("status", s.status()) {
-				return
-			}
-			if len(topics) > 0 && !write("change", map[string]any{"topics": topics}) {
 				return
 			}
 			if len(logs) > 0 && !write("log", map[string]any{"lines": logs}) {

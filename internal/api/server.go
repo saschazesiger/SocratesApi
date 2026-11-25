@@ -1,5 +1,9 @@
-// Package api serves the web interface, its JSON API under /api/ and the
-// public model API under /v1/ on one port.
+// Package api is Socrates API's own part of the server: the interface's
+// JSON API under /api/, its live status stream, and the public model API
+// under /v1/, registered on the Z-Dash server (github.com/saschazesiger/
+// Z-Dash/server). The server brings the rest: the listeners, the sign-in,
+// the guards, the change notices, the Cloudflare tunnel, Z-Dash and the
+// interface's files.
 package api
 
 import (
@@ -7,24 +11,23 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"io/fs"
-	"net"
 	"net/http"
-	"net/url"
-	"strconv"
-	"strings"
 	"time"
+
+	"github.com/saschazesiger/Z-Dash/server"
 
 	"github.com/saschazesiger/SocratesApi/internal/convert"
 	"github.com/saschazesiger/SocratesApi/internal/engine"
 	"github.com/saschazesiger/SocratesApi/internal/hf"
 	"github.com/saschazesiger/SocratesApi/internal/proxy"
 	"github.com/saschazesiger/SocratesApi/internal/store"
-	"github.com/saschazesiger/SocratesApi/web"
 )
 
 // Deps is what the server is built from.
 type Deps struct {
+	// App is the Z-Dash server Socrates API runs on; New registers the
+	// routes on it.
+	App        *server.App
 	Store      *store.Store
 	Engine     *engine.Engine
 	Proxy      *proxy.Proxy
@@ -33,59 +36,41 @@ type Deps struct {
 	Converter  *convert.Converter
 	Version    string
 	ModelsDir  string
-	// ResetPassword, if set, becomes the admin password at start.
-	ResetPassword string
-	// Hosts are extra host names the interface answers to.
-	Hosts  []string
-	Assets fs.FS
-	Logf   func(format string, args ...any)
+	Logf       func(format string, args ...any)
 }
 
-// Server serves everything.
+// Server is Socrates API's API on the Z-Dash server.
 type Server struct {
-	d      Deps
-	auth   *auth
-	hub    *hub
-	assets *assets
+	d   Deps
+	hub *hub
 }
 
-// New builds the server and hooks it to the live sources.
+// New registers the routes on d.App and hooks the server to the live
+// sources.
 func New(d Deps) *Server {
 	if d.Logf == nil {
 		d.Logf = func(string, ...any) {}
 	}
-	if d.Assets == nil {
-		d.Assets = web.FS
-	}
 	s := &Server{d: d, hub: newHub()}
-	s.auth = newAuth(d.Store, d.Logf)
-	if d.ResetPassword != "" {
-		if err := s.auth.setPassword(d.ResetPassword); err != nil {
-			d.Logf("SOCRATES_ADMIN_PASSWORD: %v", err)
-		} else {
-			s.auth.dropSessions("")
-			d.Logf("The admin password was set from SOCRATES_ADMIN_PASSWORD; everybody was signed out")
-		}
-	}
-	a, err := loadAssets(d.Assets)
-	if err != nil {
-		d.Logf("web interface: %v", err)
-	}
-	s.assets = a
 	d.Engine.OnChange = s.hub.statusChanged
 	d.Engine.OnLog = s.hub.log
 	d.Proxy.Changed = s.hub.statusChanged
-	d.Proxy.RequestLogged = func() { s.hub.notify("requests", "keys") }
+	d.Proxy.RequestLogged = func() { s.notify("requests", "keys") }
 	d.Proxy.RequireKey = s.requireKey
-	d.Downloader.Changed = func() { s.hub.statusChanged(); s.hub.notify("models") }
+	d.Downloader.Changed = func() { s.hub.statusChanged(); s.notify("models") }
 	d.Downloader.Done = s.downloadDone
 	if d.Converter != nil {
-		d.Converter.Changed = func() { s.hub.statusChanged(); s.hub.notify("models") }
+		d.Converter.Changed = func() { s.hub.statusChanged(); s.notify("models") }
 		d.Converter.Done = s.convertDone
 		d.Converter.Log = s.hub.log
 	}
+	s.routes()
 	return s
 }
+
+// notify tells every open page that lists of these topics changed; the
+// page refetches them (the server's change notices at /api/events).
+func (s *Server) notify(topics ...string) { s.d.App.Notify(topics...) }
 
 // Run does the periodic work: a status push every 2 s, so meters move.
 func (s *Server) Run(ctx context.Context) {
@@ -103,20 +88,6 @@ func (s *Server) Run(ctx context.Context) {
 	}
 }
 
-// Handler is the one handler of the port.
-func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
-	ui := http.NewServeMux()
-	s.routes(ui)
-	uiH := s.localHost(s.headers(ui))
-
-	mux.Handle("/v1/", cors(s.d.Proxy))
-	mux.HandleFunc("GET /health", s.publicHealth)
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok\n") })
-	mux.Handle("/", uiH)
-	return mux
-}
-
 // cors lets browser-based clients call the model API; it is protected by
 // API keys, not by cookies, so any origin is fine.
 func cors(h http.Handler) http.Handler {
@@ -132,128 +103,45 @@ func cors(h http.Handler) http.Handler {
 	})
 }
 
-func (s *Server) routes(mux *http.ServeMux) {
-	mux.Handle("/", s.assets)
-	mux.HandleFunc("GET /api/session", s.session)
-	mux.HandleFunc("POST /api/login", s.guard(s.login))
-	mux.HandleFunc("POST /api/setup", s.guard(s.firstPassword))
-	mux.HandleFunc("POST /api/logout", s.guard(s.logout))
-	mux.HandleFunc("POST /api/password", s.private(s.changePassword))
-	mux.HandleFunc("GET /api/events", s.private(s.events))
-	mux.HandleFunc("GET /api/status", s.private(func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.status()) }))
+// routes registers Socrates API's routes. /v1/ and /health are unguarded:
+// API clients call them by any host name, without a session, and the
+// proxy checks its own API keys. Every /api/ route is for signed-in
+// people and passes the server's CSRF guard.
+func (s *Server) routes() {
+	app := s.d.App
+	app.Unguarded("/v1/", cors(s.d.Proxy).ServeHTTP)
+	app.Unguarded("GET /health", s.publicHealth)
 
-	mux.HandleFunc("GET /api/models", s.private(s.listModels))
-	mux.HandleFunc("POST /api/models", s.private(s.addModel))
-	mux.HandleFunc("POST /api/models/convert", s.private(s.convertModel))
-	mux.HandleFunc("PATCH /api/models/{id}", s.private(s.editModel))
-	mux.HandleFunc("DELETE /api/models/{id}", s.private(s.deleteModel))
-	mux.HandleFunc("POST /api/models/{id}/activate", s.private(s.activateModel))
-	mux.HandleFunc("POST /api/models/{id}/plan", s.private(s.planModel))
-	mux.HandleFunc("POST /api/models/{id}/retry", s.private(s.retryModel))
-	mux.HandleFunc("POST /api/engine/stop", s.private(s.stopEngine))
-	mux.HandleFunc("POST /api/engine/restart", s.private(s.restartEngine))
-	mux.HandleFunc("GET /api/logs", s.private(func(w http.ResponseWriter, r *http.Request) {
+	// The live status and the engine log; the change notices of the lists
+	// are the server's (/api/events).
+	app.HandleFunc("GET /api/stream", s.events)
+	app.HandleFunc("GET /api/status", func(w http.ResponseWriter, r *http.Request) { writeJSON(w, 200, s.status()) })
+
+	app.HandleFunc("GET /api/models", s.listModels)
+	app.HandleFunc("POST /api/models", s.addModel)
+	app.HandleFunc("POST /api/models/convert", s.convertModel)
+	app.HandleFunc("PATCH /api/models/{id}", s.editModel)
+	app.HandleFunc("DELETE /api/models/{id}", s.deleteModel)
+	app.HandleFunc("POST /api/models/{id}/activate", s.activateModel)
+	app.HandleFunc("POST /api/models/{id}/plan", s.planModel)
+	app.HandleFunc("POST /api/models/{id}/retry", s.retryModel)
+	app.HandleFunc("POST /api/engine/stop", s.stopEngine)
+	app.HandleFunc("POST /api/engine/restart", s.restartEngine)
+	app.HandleFunc("GET /api/logs", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, 200, map[string]any{"lines": s.d.Engine.Logs()})
-	}))
-
-	mux.HandleFunc("GET /api/hf/search", s.private(s.hfSearch))
-	mux.HandleFunc("GET /api/hf/repo", s.private(s.hfRepo))
-
-	mux.HandleFunc("POST /api/chat", s.private(s.chat))
-
-	mux.HandleFunc("GET /api/keys", s.private(s.listKeys))
-	mux.HandleFunc("POST /api/keys", s.private(s.addKey))
-	mux.HandleFunc("DELETE /api/keys/{id}", s.private(s.deleteKey))
-	mux.HandleFunc("GET /api/requests", s.private(s.listRequests))
-	mux.HandleFunc("GET /api/settings", s.private(s.getSettings))
-	mux.HandleFunc("PUT /api/settings", s.private(s.putSettings))
-
-	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
-		writeError(w, http.StatusNotFound, "This API address does not exist.")
 	})
-}
 
-// localHost refuses host names the person did not name, so a web page on
-// the internet cannot reach the interface through DNS rebinding (and set
-// the first password). IP addresses and local names always work.
-func (s *Server) localHost(h http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !localName(r.Host, s.d.Hosts) {
-			http.Error(w, "Socrates API does not know the name "+strconv.Quote(r.Host)+
-				". Open it by its IP address, or add the name to the environment variable SOCRATES_HOSTS.", http.StatusForbidden)
-			return
-		}
-		h.ServeHTTP(w, r)
-	})
-}
+	app.HandleFunc("GET /api/hf/search", s.hfSearch)
+	app.HandleFunc("GET /api/hf/repo", s.hfRepo)
 
-func localName(hostport string, extra []string) bool {
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
-		host = h
-	}
-	host = strings.ToLower(strings.TrimSuffix(strings.Trim(host, "[]"), "."))
-	if host == "" || net.ParseIP(host) != nil || !strings.Contains(host, ".") {
-		return host != ""
-	}
-	for _, suffix := range []string{".localhost", ".local", ".lan", ".internal", ".home.arpa", ".home", ".intranet", ".ts.net"} {
-		if strings.HasSuffix(host, suffix) {
-			return true
-		}
-	}
-	for _, e := range extra {
-		if e = strings.TrimSpace(e); e == "*" || strings.EqualFold(e, host) {
-			return true
-		}
-	}
-	return false
-}
+	app.HandleFunc("POST /api/chat", s.chat)
 
-const csp = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; font-src 'self'; " +
-	"connect-src 'self'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'; object-src 'none'"
-
-func (s *Server) headers(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		h := w.Header()
-		h.Set("Content-Security-Policy", csp)
-		h.Set("X-Content-Type-Options", "nosniff")
-		h.Set("Referrer-Policy", "same-origin")
-		h.Set("X-Frame-Options", "DENY")
-		if strings.HasPrefix(r.URL.Path, "/api/") {
-			h.Set("Cache-Control", "no-store")
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// guard refuses changes that did not come from the interface (CSRF).
-func (s *Server) guard(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet && r.Method != http.MethodHead {
-			if r.Header.Get("X-Socrates") != "1" {
-				writeError(w, http.StatusForbidden, "This request was refused: it did not come from the Socrates API interface. Reload the page and try again.")
-				return
-			}
-			if o := r.Header.Get("Origin"); o != "" {
-				u, err := url.Parse(o)
-				if err != nil || !strings.EqualFold(u.Host, r.Host) {
-					writeError(w, http.StatusForbidden, "This request was refused: it came from another website.")
-					return
-				}
-			}
-		}
-		h(w, r)
-	}
-}
-
-func (s *Server) private(h http.HandlerFunc) http.HandlerFunc {
-	return s.guard(func(w http.ResponseWriter, r *http.Request) {
-		if !s.auth.check(r) {
-			writeError(w, http.StatusUnauthorized, "You are not signed in. Reload the page and sign in.")
-			return
-		}
-		h(w, r)
-	})
+	app.HandleFunc("GET /api/keys", s.listKeys)
+	app.HandleFunc("POST /api/keys", s.addKey)
+	app.HandleFunc("DELETE /api/keys/{id}", s.deleteKey)
+	app.HandleFunc("GET /api/requests", s.listRequests)
+	app.HandleFunc("GET /api/settings", s.getSettings)
+	app.HandleFunc("PUT /api/settings", s.putSettings)
 }
 
 type apiError struct {

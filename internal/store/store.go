@@ -1,6 +1,7 @@
 // Package store keeps all state in one SQLite file under the data
-// directory: settings, the admin password, models, API keys and a short
-// request log. It is the only place that knows SQL.
+// directory: settings, models, API keys, a short request log, and the
+// state of the Z-Dash server (the admin password, the sessions, the tunnel;
+// ServerKV). It is the only place that knows SQL.
 package store
 
 import (
@@ -113,6 +114,33 @@ func (s *Store) SetJSONIfMissing(key string, v any) (bool, error) {
 func (s *Store) Delete(key string) error {
 	_, err := s.db.Exec(`DELETE FROM kv WHERE key = ?`, key)
 	return err
+}
+
+// Get reads the raw value of a key; ErrNotFound if it is not set.
+func (s *Store) Get(key string) ([]byte, error) {
+	var b []byte
+	err := s.db.QueryRow(`SELECT value FROM kv WHERE key = ?`, key).Scan(&b)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, ErrNotFound
+	}
+	return b, err
+}
+
+// Set stores a raw value under key.
+func (s *Store) Set(key string, value []byte) error {
+	_, err := s.db.Exec(`INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
+// SetIfMissing stores a raw value only if key is not set; it reports
+// whether it did.
+func (s *Store) SetIfMissing(key string, value []byte) (bool, error) {
+	res, err := s.db.Exec(`INSERT INTO kv(key, value) VALUES(?, ?) ON CONFLICT(key) DO NOTHING`, key, value)
+	if err != nil {
+		return false, err
+	}
+	n, _ := res.RowsAffected()
+	return n == 1, nil
 }
 
 // --- models ------------------------------------------------------------------
