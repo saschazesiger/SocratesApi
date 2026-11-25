@@ -127,9 +127,13 @@ func main() {
 		DataDir: dataDir,
 		Listen:  listen,
 		Assets:  web.FS,
-		KV:      store.ServerKV{St: st},
-		Sealer:  sealer,
-		Logf:    logf,
+		// Requests to the model API carry whole conversations and images,
+		// up to 256 MB, from clients on slow links: no bound on how long
+		// they take to arrive.
+		ReadTimeout: -1,
+		KV:          store.ServerKV{St: st},
+		Sealer:      sealer,
+		Logf:        logf,
 	})
 	if err != nil {
 		logger.Fatalf("%v", err)
