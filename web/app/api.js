@@ -1,68 +1,30 @@
 /*
- * The internal JSON API of Socrates API and its live updates. Every request
- * that changes something carries the header X-Socrates, which the server
- * requires against cross-site requests. A failed request rejects with an
- * ApiError whose message is meant for the user, as the server wrote it.
+ * The internal JSON API of Socrates API, through the Z-Dash server's shell
+ * (/z-dash/server/api.js): every request that changes something carries the
+ * header X-Z-Dash, which the server requires against cross-site requests,
+ * and a failed request rejects with an ApiError whose message is meant for
+ * the user, as the server wrote it. A 401 is the shell's: it shows the
+ * sign-in card. The change notices of the lists (models, keys, requests,
+ * settings) are the shell's too (on() of /z-dash/server/shell.js, wired in
+ * main.js); the live status and the engine log come on a stream of their own.
  */
 
-export class ApiError extends Error {
-  constructor(status, message, fields = {}, body = {}) {
-    super(message);
-    this.status = status;
-    this.fields = fields || {};
-    this.body = body;
-  }
-}
+import { ApiError, CSRF_HEADER, request, get } from '/z-dash/server/api.js';
 
-let onUnauthorized = () => {};
+export { ApiError, request, get, post, put, del } from '/z-dash/server/api.js';
 
-/** Called when the server says the session is gone. */
-export function whenSignedOut(handler) {
-  onUnauthorized = handler;
-}
-
-export const NOT_ANSWERING = 'Socrates API does not answer. Check that the container is running and that this computer can reach it.';
-
-export async function request(method, path, body) {
-  const init = { method, credentials: 'same-origin', headers: { Accept: 'application/json' } };
-  if (method !== 'GET') init.headers['X-Socrates'] = '1';
-  if (body !== undefined) {
-    init.headers['Content-Type'] = 'application/json';
-    init.body = JSON.stringify(body);
-  }
-  let response;
-  try {
-    response = await fetch(path, init);
-  } catch (error) {
-    throw new ApiError(0, NOT_ANSWERING);
-  }
-  let data = {};
-  try {
-    data = await response.json();
-  } catch (error) {
-    data = {};
-  }
-  if (!response.ok) {
-    if (response.status === 401 && path !== '/api/login') onUnauthorized();
-    throw new ApiError(response.status, data.error || `The server answered ${response.status}. Try again.`, data.fields, data);
-  }
-  return data;
-}
-
-export const get = (path) => request('GET', path);
-export const post = (path, body = {}) => request('POST', path, body);
-export const put = (path, body = {}) => request('PUT', path, body);
 export const patch = (path, body = {}) => request('PATCH', path, body);
-export const del = (path) => request('DELETE', path);
+
+const NOT_ANSWERING = 'Socrates API does not answer. Check that the container is running and that this computer can reach it.';
 
 /*
- * Live updates over server-sent events: "status" carries the whole status
- * object, "change" the topics whose lists moved (the page refetches them),
- * "log" new lines of the engine log. EventSource reconnects by itself;
- * onUp tells whether the stream is up.
+ * The live status and the engine log over server-sent events (GET
+ * /api/stream): "status" carries the whole status object, "log" new lines of
+ * the engine log. EventSource reconnects by itself while the server is away;
+ * a refused stream (signed out) stays closed. onUp tells whether it is up.
  */
-export function live({ onStatus, onChange, onLog, onUp = () => {} }) {
-  const source = new EventSource('/api/events');
+export function live({ onStatus, onLog, onUp = () => {} }) {
+  const source = new EventSource('/api/stream');
   const read = (event) => {
     try {
       return JSON.parse(event.data);
@@ -75,10 +37,6 @@ export function live({ onStatus, onChange, onLog, onUp = () => {} }) {
   source.addEventListener('status', (event) => {
     const data = read(event);
     if (data) onStatus(data);
-  });
-  source.addEventListener('change', (event) => {
-    const data = read(event);
-    onChange(new Set(data && Array.isArray(data.topics) ? data.topics : ['models', 'keys', 'requests', 'settings']));
   });
   source.addEventListener('log', (event) => {
     const data = read(event);
@@ -100,7 +58,7 @@ export async function chatStream(body, { signal, onChunk }) {
     response = await fetch('/api/chat', {
       method: 'POST',
       credentials: 'same-origin',
-      headers: { 'X-Socrates': '1', 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+      headers: { [CSRF_HEADER]: '1', 'Content-Type': 'application/json', Accept: 'text/event-stream' },
       body: JSON.stringify(body),
       signal,
     });
@@ -115,7 +73,8 @@ export async function chatStream(body, { signal, onChunk }) {
     } catch (error) {
       data = {};
     }
-    if (response.status === 401) onUnauthorized();
+    // The session ended: a request through the shell's helper lets the shell hear it and show the sign-in.
+    if (response.status === 401) get('/api/status').catch(() => {});
     throw new ApiError(response.status, data.error || `The server answered ${response.status}.`, data.fields, data);
   }
   const reader = response.body.getReader();

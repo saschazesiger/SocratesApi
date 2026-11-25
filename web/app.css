@@ -4,7 +4,6 @@
  * literals, no keyframes, and no rule that restyles a .ds-* component.
  *
  *   .so-logo        the Socrates mark (img/logo.png): a brand image, not a glyph
- *   .so-brand-row   the mark and the name above the sign-in card
  *   .so-engine      the engine's state and model in the top bar, a link to Models
  *   .so-grow        takes the room left in a row (a code block beside its copy button)
  *   .so-tiers       the memory bars of a placement (GPU, RAM, NVMe), one under the other
@@ -26,12 +25,6 @@
   inline-size: var(--so-logo-size);
   block-size: var(--so-logo-size);
   object-fit: contain;
-}
-
-.so-brand-row {
-  display: flex;
-  align-items: center;
-  gap: var(--ds-space-3);
 }
 
 .so-engine {

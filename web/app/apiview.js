@@ -3,8 +3,9 @@
  * model id with copy buttons, ready-made configurations (opencode, the
  * OpenAI Python SDK, curl, Claude Code), the endpoints with an example
  * each, the API keys (create shows the secret once, revoke asks first),
- * the latest requests live, and the settings: the Hugging Face token,
- * whether a key is required, the admin password.
+ * the latest requests live, and the settings: the Hugging Face token and
+ * whether a key is required. The admin password and remote access are on
+ * the Settings page.
  */
 import * as api from './api.js';
 import { ctx } from './main.js';
@@ -194,17 +195,6 @@ function tokenHtml(s) {
     (s.hfToken ? busyButton('ds-btn ds-btn--text', 'Remove the token', 'Removing', 'Removed', 'data-act="clear-token"') : '') + '</div></form>';
 }
 
-function passwordHtml() {
-  return '<form class="ds-form" id="password-form" novalidate>' +
-    '<div class="ds-field"><label class="ds-field__label" for="pw-current">Current password</label><input class="ds-input" id="pw-current" type="password" autocomplete="current-password" data-field="current"></div>' +
-    '<div class="ds-form-grid ds-form-grid--2">' +
-      '<div class="ds-field"><label class="ds-field__label" for="pw-next">New password</label><input class="ds-input" id="pw-next" type="password" autocomplete="new-password" data-field="password" aria-describedby="pw-next-hint">' +
-        '<small class="ds-field__hint" id="pw-next-hint">At least 10 characters.</small></div>' +
-      '<div class="ds-field"><label class="ds-field__label" for="pw-again">Repeat it</label><input class="ds-input" id="pw-again" type="password" autocomplete="new-password"></div>' +
-    '</div>' +
-    `<div class="ds-form-actions">${busyButton('ds-btn', 'Change password', 'Changing', 'Changed', 'type="submit"')}</div></form>`;
-}
-
 function quickHtml(d) {
   const e = (ctx.status && ctx.status.engine) || {};
   return copyField('base-url', 'Base URL', d.baseUrl, 'For OpenAI-compatible clients. Anthropic clients take it without /v1.') +
@@ -255,9 +245,6 @@ export default {
         `<div id="require-key">${switchHtml({ id: 'require-key-input', attrs: 'data-act="require-key"', label: 'Require an API key', checked: d.settings.requireKey, hint: 'Off: anyone who can reach port 8080 can use the model. The chat on this page never needs a key.' })}</div>` +
         '<hr class="ds-divider">' +
         `<div id="hf-slot">${tokenHtml(d.settings)}</div>` +
-        '<hr class="ds-divider">' +
-        '<h3 class="ds-card__subtitle">Admin password</h3><p class="ds-muted">Signs you in to this page. Changing it signs out every other browser.</p>' +
-        passwordHtml() +
       '</section>';
   },
 
@@ -319,29 +306,6 @@ export default {
         input.value = '';
         DS.dom.morphHtml($('#hf-slot', ctx.page), tokenHtml(d.settings));
         toast('The Hugging Face token is saved.');
-      } catch (error) {
-        if (!showFieldErrors(t, error.fields)) toastError(error);
-      }
-      return;
-    }
-    if (type === 'submit' && t.id === 'password-form') {
-      event.preventDefault();
-      clearErrors(t);
-      const current = $('#pw-current', t);
-      const next = $('#pw-next', t);
-      const again = $('#pw-again', t);
-      if (next.value.length < 10) {
-        showFieldErrors(t, { password: 'Use at least 10 characters.' });
-        return;
-      }
-      if (next.value !== again.value) {
-        showFieldErrors(t, { password: 'The two new passwords differ.' });
-        return;
-      }
-      try {
-        const answer = await M.busy($('[type="submit"]', t), () => api.post('/api/password', { current: current.value, password: next.value }));
-        t.reset();
-        toast(answer.message || 'The password was changed.');
       } catch (error) {
         if (!showFieldErrors(t, error.fields)) toastError(error);
       }

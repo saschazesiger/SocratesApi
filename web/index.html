@@ -16,59 +16,18 @@
 <link rel="apple-touch-icon" sizes="180x180" href="img/apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
 <!-- Fonts, the design system, the Socrates theme (tokens only), the shipped dark theme when the device asks for it,
-     then the layout glue. No inline scripts: the Content-Security-Policy forbids them. -->
-<link rel="stylesheet" href="vendor/z-dash/fonts/fonts.css">
-<link rel="stylesheet" href="vendor/z-dash/ds.min.css">
+     the shell's helper class (the tunnel settings), then the layout glue. Z-Dash and the shell come from the server
+     (/z-dash/). No inline scripts: the Content-Security-Policy forbids them. -->
+<link rel="stylesheet" href="/z-dash/fonts/fonts.css">
+<link rel="stylesheet" href="/z-dash/ds.min.css">
 <link rel="stylesheet" href="theme.css">
-<link rel="stylesheet" href="vendor/z-dash/themes/dark.css" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/z-dash/themes/dark.css" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/z-dash/server/shell.css">
 <link rel="stylesheet" href="app.css">
 </head>
 <body>
-<!-- While the session loads: shows only when that takes a moment. -->
-<div class="ds-boot" role="status" id="boot"><span class="ds-loader" aria-hidden="true"></span>Starting Socrates API ...</div>
-
-<!-- Sign in, or set the admin password on the first start. -->
-<div class="ds-auth" id="auth" hidden>
-  <div class="ds-auth__alert" id="auth-alert"></div>
-  <section class="ds-card ds-card--elevated ds-auth__card" aria-labelledby="auth-title">
-    <div class="so-brand-row"><img class="so-logo" src="img/logo.png" alt="" width="32" height="32"><span class="ds-brand__name">Socrates API</span></div>
-    <h1 class="ds-card__title" id="auth-title" tabindex="-1">Sign in</h1>
-    <form class="ds-form" id="login-form" novalidate>
-      <div class="ds-field">
-        <label class="ds-field__label" for="login-password">Admin password</label>
-        <input class="ds-input" id="login-password" name="password" type="password" autocomplete="current-password" required aria-describedby="login-hint">
-        <small class="ds-field__hint" id="login-hint">Forgot it? Start the container with the environment variable SOCRATES_ADMIN_PASSWORD set to a new password.</small>
-      </div>
-      <div class="ds-form-actions">
-        <button class="ds-btn ds-btn--filled" type="submit"><span class="ds-btn__faces">
-          <span class="ds-btn__face">Sign in</span>
-          <span class="ds-btn__face ds-btn__face--busy" aria-hidden="true"><span class="ds-spinner ds-spinner--ink ds-sm"></span>Signing in</span>
-          <span class="ds-btn__face ds-btn__face--done" aria-hidden="true" data-icon-done>Signed in</span>
-        </span></button>
-      </div>
-    </form>
-    <form class="ds-form" id="setup-form" novalidate hidden>
-      <p class="ds-muted">Welcome. Choose the password that protects this page; the API itself uses keys you create later.</p>
-      <div class="ds-field">
-        <label class="ds-field__label" for="setup-password">Admin password</label>
-        <input class="ds-input" id="setup-password" name="password" type="password" autocomplete="new-password" minlength="10" required aria-describedby="setup-hint">
-        <small class="ds-field__hint" id="setup-hint">At least 10 characters.</small>
-      </div>
-      <div class="ds-field">
-        <label class="ds-field__label" for="setup-again">Repeat the password</label>
-        <input class="ds-input" id="setup-again" type="password" autocomplete="new-password" required>
-      </div>
-      <div class="ds-form-actions">
-        <button class="ds-btn ds-btn--filled" type="submit"><span class="ds-btn__faces">
-          <span class="ds-btn__face">Set the password</span>
-          <span class="ds-btn__face ds-btn__face--busy" aria-hidden="true"><span class="ds-spinner ds-spinner--ink ds-sm"></span>Saving</span>
-          <span class="ds-btn__face ds-btn__face--done" aria-hidden="true" data-icon-done>Saved</span>
-        </span></button>
-      </div>
-    </form>
-  </section>
-</div>
-
+<!-- The app, hidden until someone is signed in: the shell (/z-dash/server/shell.js) shows the sign-in card, or the
+     first-password card on the very first visit, meanwhile. -->
 <div class="ds-app ds-app--drawer" id="app" hidden>
   <a class="ds-skip" href="#main">Skip to content</a>
 
@@ -80,12 +39,8 @@
       <a class="so-engine ds-pressable" href="#/models" id="engine-link"></a>
       <a class="ds-btn ds-btn--quiet ds-btn--icon" href="https://github.com/saschazesiger/SocratesApi#readme" target="_blank" rel="noopener" aria-label="Documentation (opens GitHub)" data-tip="Documentation" data-icon="helpCircle" data-icon-place="start"></a>
     </div>
-    <div class="ds-account ds-account--capsule" id="account">
-      <div class="ds-account__text" aria-hidden="true"><div class="ds-account__name">Admin</div><div class="ds-account__email" id="account-version"></div></div>
-      <span class="ds-account__avatar" role="img" aria-label="Admin" data-tip="Admin">A</span>
-      <span class="ds-account__divider"></span>
-      <button class="ds-btn ds-btn--text" type="button" id="sign-out">Sign out</button>
-    </div>
+    <!-- Filled by the shell: who is signed in, how, and Sign out. -->
+    <div class="ds-account ds-account--capsule" id="account" data-zs-account></div>
   </div>
 
   <div class="ds-scrim"></div>
@@ -97,6 +52,9 @@
         <a class="ds-drawer__item" href="#/chat" data-route="chat" data-icon="chat" data-icon-place="start"><span class="ds-drawer__label">Chat</span></a>
         <a class="ds-drawer__item" href="#/api" data-route="api" data-icon="braces" data-icon-place="start"><span class="ds-drawer__label">API</span></a>
       </div>
+    </div>
+    <div class="ds-drawer__foot ds-drawer__foot--pinned">
+      <a class="ds-drawer__item" href="#/settings" data-route="settings" data-icon="settings" data-icon-place="start"><span class="ds-drawer__label">Settings</span></a>
     </div>
   </nav>
 
@@ -180,7 +138,7 @@
   </div>
 </dialog>
 
-<script src="vendor/z-dash/ds.min.js"></script>
+<script src="/z-dash/ds.min.js"></script>
 <script type="module" src="app/main.js"></script>
 </body>
 </html>

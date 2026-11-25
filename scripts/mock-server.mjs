@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 /*
  * A dependency-free development server for the Socrates API interface: it
- * serves web/ and mocks the whole internal /api/* contract of
- * docs/internal-api.md with data that moves (the engine loads and becomes
+ * serves web/, Z-Dash and the shell of the Z-Dash server (/z-dash/, from the
+ * module's folder: `go list -m`, or ZDASH_SERVER=<path to its server/>), and
+ * mocks the whole internal /api/* contract of docs/internal-api.md, with the
+ * server's own routes (session, sign-in, change notices, an untouched
+ * tunnel), with data that moves (the engine loads and becomes
  * ready, a download progresses, chats stream with prompt progress, thinking
  * and timings, API traffic comes in, the engine log grows).
  *
@@ -19,9 +22,13 @@ import { readFile, stat } from 'node:fs/promises';
 import { dirname, extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomBytes } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', 'web');
 const PORT = Number(process.env.PORT) || 8090;
+// The Z-Dash server module carries Z-Dash (zdash/dist) and the shell (zdash/shell), served at /z-dash/.
+const ZDASH = resolve(process.env.ZDASH_SERVER || execFileSync('go', ['list', '-m', '-f', '{{.Dir}}', 'github.com/saschazesiger/Z-Dash/server'],
+  { cwd: resolve(ROOT, '..'), encoding: 'utf8' }).trim());
 const GiB = 1024 ** 3;
 const MiB = 1024 ** 2;
 const now = () => Date.now();
@@ -624,10 +631,12 @@ function log(line) {
   pendingLog.push(line);
 }
 
+// The status and the log go to Socrates' own stream (/api/stream), the change notices to the server's (/api/events).
 const clients = new Set();
+const noticeClients = new Set();
 function send(event, data) {
   const payload = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  for (const res of clients) res.write(payload);
+  for (const res of event === 'change' ? noticeClients : clients) res.write(payload);
 }
 
 let statusQueued = false;
@@ -754,9 +763,17 @@ const CSP = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 's
 async function serveFile(req, res) {
   const url = new URL(req.url, 'http://x');
   let path = decodeURIComponent(url.pathname);
-  if (path === '/') path = '/index.html';
-  const file = normalize(join(ROOT, path));
-  if (!file.startsWith(ROOT)) return fail(res, 404, 'Not found.');
+  if (path.endsWith('/')) path += 'index.html';
+  let root = ROOT;
+  if (path.startsWith('/z-dash/server/')) {
+    root = join(ZDASH, 'zdash', 'shell');
+    path = path.slice('/z-dash/server'.length);
+  } else if (path.startsWith('/z-dash/')) {
+    root = join(ZDASH, 'zdash', 'dist');
+    path = path.slice('/z-dash'.length);
+  }
+  const file = normalize(join(root, path));
+  if (!file.startsWith(root)) return fail(res, 404, 'Not found.');
   try {
     const info = await stat(file);
     if (!info.isFile()) throw new Error('dir');
@@ -772,9 +789,11 @@ async function serveFile(req, res) {
 const routes = [];
 const route = (method, pattern, handler, { open = false } = {}) => routes.push({ method, pattern: new RegExp(`^${pattern}$`), handler, open });
 
-route('GET', '/api/session', (req, res) => json(res, 200, { signedIn: !!sessionOf(req), needsPassword: !password, version: '0.1.0' }), { open: true });
-route('POST', '/api/setup', async (req, res) => {
-  if (password) return fail(res, 409, 'The admin password is already set. Sign in instead.');
+const session = (req) => ({ name: 'Socrates API', version: '0.1.0', env: 'SOCRATES', pages: true, signedIn: !!sessionOf(req),
+  needsPassword: !password, via: 'local', email: '', open: false, tunnel: '', logout: '' });
+route('GET', '/api/session', (req, res) => json(res, 200, session(req)), { open: true });
+route('POST', '/api/setup/password', async (req, res) => {
+  if (password) return fail(res, 409, 'A password was set already. Sign in with it.');
   const b = await body(req);
   if (!b.password || b.password.length < 10) return fail(res, 400, 'Use at least 10 characters.', { password: 'Use at least 10 characters.' });
   password = b.password;
@@ -783,23 +802,42 @@ route('POST', '/api/setup', async (req, res) => {
 route('POST', '/api/login', async (req, res) => {
   const b = await body(req);
   await sleep(300);
-  if (!password) return fail(res, 409, 'Set the admin password first.');
-  if (b.password !== password) return fail(res, 401, 'That password is not right.');
+  if (!password) return fail(res, 409, 'No password is set yet. Reload the page to set one.');
+  if (b.password !== password) return fail(res, 400, 'The password is wrong.', { password: 'The password is wrong.' });
   json(res, 200, { signedIn: true }, newSession(res));
 }, { open: true });
 route('POST', '/api/logout', (req, res) => {
   sessions.delete(sessionOf(req));
-  json(res, 200, {}, { 'Set-Cookie': 'socrates_session=; Path=/; Max-Age=0' });
-});
+  json(res, 200, { next: '' }, { 'Set-Cookie': 'socrates_session=; Path=/; Max-Age=0' });
+}, { open: true });
 route('POST', '/api/password', async (req, res) => {
   const b = await body(req);
-  if (b.current !== password) return fail(res, 400, 'The current password is not right.', { current: 'The current password is not right.' });
+  if (b.current !== password) return fail(res, 400, 'The current password is wrong.', { current: 'The current password is wrong.' });
   if (!b.password || b.password.length < 10) return fail(res, 400, 'Use at least 10 characters.', { password: 'Use at least 10 characters.' });
   password = b.password;
-  json(res, 200, { message: 'The password was changed. Other browsers are signed out.' });
+  json(res, 200, { message: 'Password changed. Other browsers were signed out.' });
 });
 
+// The tunnel of the Z-Dash server, as it answers before anybody set one up; the mock sets none up.
+const PERMISSIONS = [['Account', 'Cloudflare Tunnel', 'Edit'], ['Account', 'Access: Apps and Policies', 'Edit'],
+  ['Account', 'Access: Organizations, Identity Providers, and Groups', 'Edit'], ['Zone', 'DNS', 'Edit'], ['Zone', 'Zone', 'Read']]
+  .map(([scope, name, level]) => ({ scope, name, level })).concat([{ scope: 'User', name: 'User Details', level: 'Read', optional: true }]);
+route('GET', '/api/cloudflare', (req, res) => json(res, 200, {
+  bypass: null, email: '', via: 'local', permissions: PERMISSIONS, tokenUrl: 'https://dash.cloudflare.com/profile/api-tokens',
+  status: { configured: false, hostname: '', publicUrl: '', emails: [], account: '', zone: '', zoneId: '', running: false, connected: false,
+    verified: false, downloading: false, hasToken: false, partial: false, error: '',
+    job: { kind: '', running: false, step: '', done: null, error: '', ok: false },
+    cloudflared: { installed: false, version: '', path: '', managed: false, canInstall: true }, logs: [] },
+}));
+route('POST', '/api/cloudflare/check', (req, res) => fail(res, 400, 'The mock does not talk to Cloudflare.', { apiToken: 'The mock does not talk to Cloudflare.' }));
+
 route('GET', '/api/events', (req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
+  res.write('retry: 3000\n\n');
+  noticeClients.add(res);
+  req.on('close', () => noticeClients.delete(res));
+});
+route('GET', '/api/stream', (req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' });
   res.write(`event: status\ndata: ${JSON.stringify(status())}\n\n`);
   clients.add(res);
@@ -1057,7 +1095,7 @@ const server = http.createServer(async (req, res) => {
     const match = r.pattern.exec(url.pathname);
     if (!match) continue;
     if (!r.open && !sessionOf(req)) return fail(res, 401, 'Sign in first.');
-    if (req.method !== 'GET' && req.headers['x-socrates'] !== '1') return fail(res, 403, 'The request lacks the X-Socrates header.');
+    if (req.method !== 'GET' && req.headers['x-z-dash'] !== '1') return fail(res, 403, 'The request lacks the X-Z-Dash header.');
     try {
       return await r.handler(req, res, ...match.slice(1));
     } catch (error) {

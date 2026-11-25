@@ -1,8 +1,12 @@
 /*
- * The frame of the interface: session, first start and sign-in, hash routes
- * with DS.motion.transition(), the drawer, the side sheets (a shared one and
- * the engine log), live updates over server-sent events, the engine's state
- * in the top bar, and the events every view gets delegated.
+ * The frame of the interface: hash routes with DS.motion.transition(), the
+ * drawer, the side sheets (a shared one and the engine log), live updates,
+ * the engine's state in the top bar, and the events every view gets
+ * delegated. Sign-in, the first password, the account capsule, sign-out and
+ * the change notices are the Z-Dash server's shell
+ * (/z-dash/server/shell.js): start() resolves once someone is signed in,
+ * on(topic) hears the notices. The live status and the engine log come on
+ * Socrates' own stream (/api/stream).
  *
  * A view is an object:
  *   title, nav           the document title and the drawer item it belongs to
@@ -17,6 +21,7 @@
  *   sheet(type, event)   the same inside the side sheet it opened
  *   leave()              before another view replaces it (optional)
  */
+import { start as startShell, on, current } from '/z-dash/server/shell.js';
 import * as api from './api.js';
 import { $, $$, M, esc, head, alertHtml, copyFrom, toast, engineChip } from './ui.js';
 import models from './models.js';
@@ -24,6 +29,7 @@ import addModel from './addmodel.js';
 import modelSettings from './modelsettings.js';
 import chat from './chat.js';
 import apiView from './apiview.js';
+import settings from './settings.js';
 
 const DS = window.DS;
 const app = $('#app');
@@ -42,6 +48,7 @@ const VIEWS = {
   'models/settings': modelSettings,
   chat,
   api: apiView,
+  settings,
 };
 
 /** What the views share: the session, the live status, the current route and its data. */
@@ -155,43 +162,42 @@ async function refresh(topics) {
   }
 }
 
+/*
+ * The shell's change notices: one refresh() per burst, whatever topics it
+ * names. A notice for every topic (an empty set: the stream came back, the
+ * tab woke, someone signed in again) refreshes the view and reopens the
+ * status stream if a sign-out closed it.
+ */
+const TOPICS = ['models', 'keys', 'requests', 'settings'];
+let notices = null;
+
+function onTopics(topics) {
+  if (!notices) {
+    notices = new Set();
+    queueMicrotask(() => {
+      const all = notices.has('*');
+      const these = notices;
+      notices = null;
+      if (all) {
+        ctx.session = current() || ctx.session;
+        connect();
+      }
+      refresh(all ? null : these);
+    });
+  }
+  if (!topics.size) notices.add('*');
+  for (const topic of topics) notices.add(topic);
+}
+
+for (const topic of TOPICS) on(topic, onTopics);
+
+/* The live status and the engine log. EventSource reconnects by itself; a refused stream (signed out) is opened again
+   by the next notice for every topic, which the shell sends once someone is signed in again. */
 let stream = null;
-let offlineTimer = 0;
-const panel = $('.ds-panel');
-let banner = null;
 
 function connect() {
-  if (stream) return;
-  stream = api.live({
-    onStatus: takeStatus,
-    onChange: (topics) => refresh(topics),
-    onLog: appendLog,
-    onUp: (up) => {
-      clearTimeout(offlineTimer);
-      if (up) {
-        showOffline(false);
-        refresh(new Set(['models', 'keys', 'requests', 'settings']));
-      } else {
-        offlineTimer = setTimeout(() => showOffline(true), 4000);
-      }
-    },
-  });
-}
-
-function disconnect() {
-  if (stream) stream.close();
-  stream = null;
-}
-
-/* A message for the whole app while the server does not answer. */
-function showOffline(on) {
-  if (on === Boolean(banner?.isConnected)) return;
-  if (!banner) {
-    banner = document.createElement('div');
-    banner.className = 'ds-banner';
-    DS.dom.morphHtml(banner, alertHtml('warning', '', 'Socrates API does not answer. What you see stays as it was until it is back; the page reconnects by itself.', '', 'role="status"'));
-  }
-  M.flip(panel, () => { if (on) panel.prepend(banner); else banner.remove(); }, { items: ':scope > *' });
+  if (stream && stream.readyState !== EventSource.CLOSED) return;
+  stream = api.live({ onStatus: takeStatus, onLog: appendLog });
 }
 
 /* ── The engine in the top bar ────────────────────────────────────── */
@@ -199,6 +205,11 @@ function showOffline(on) {
 const engineLink = $('#engine-link');
 
 function takeStatus(status) {
+  // Signed out (the shell hid the app): nothing more to show until someone signs in again, which reopens it.
+  if (app.hidden && stream) {
+    stream.close();
+    return;
+  }
   ctx.status = status;
   renderEngineLink(status.engine);
   if (ctx.view && ctx.view.status) ctx.view.status(status);
@@ -306,98 +317,6 @@ document.addEventListener('input', (event) => {
   }
 });
 
-/* ── Session ──────────────────────────────────────────────────────── */
-
-const auth = $('#auth');
-const boot = $('#boot');
-const loginForm = $('#login-form');
-const setupForm = $('#setup-form');
-const authAlert = $('#auth-alert');
-
-async function reloadSession() {
-  ctx.session = await api.get('/api/session');
-  $('#account-version').textContent = ctx.session.version ? `Socrates API ${ctx.session.version}` : 'Signed in';
-  return ctx.session;
-}
-
-function showAuth(setup, message = '', kind = 'warning') {
-  disconnect();
-  boot.hidden = true;
-  app.hidden = true;
-  auth.hidden = false;
-  $('#auth-title').textContent = setup ? 'Set the admin password' : 'Sign in';
-  loginForm.hidden = setup;
-  setupForm.hidden = !setup;
-  DS.dom.morphHtml(authAlert, message ? alertHtml(kind, '', esc(message)) : '');
-  (setup ? setupForm : loginForm).reset();
-  $(setup ? '#setup-password' : '#login-password').focus();
-}
-
-function authError(text, input) {
-  DS.dom.morphHtml(authAlert, alertHtml('error', '', esc(text)));
-  if (input) {
-    input.select();
-    input.focus();
-  }
-}
-
-loginForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const input = $('#login-password');
-  const button = $('[type="submit"]', loginForm);
-  if (!input.value) {
-    authError('Enter the admin password.', input);
-    return;
-  }
-  try {
-    await M.busy(button, () => api.post('/api/login', { password: input.value }));
-  } catch (error) {
-    authError(error.message, input);
-    return;
-  }
-  auth.hidden = true;
-  start();
-});
-
-setupForm.addEventListener('submit', async (event) => {
-  event.preventDefault();
-  const first = $('#setup-password');
-  const again = $('#setup-again');
-  const button = $('[type="submit"]', setupForm);
-  if (first.value.length < 10) {
-    authError('Use at least 10 characters.', first);
-    return;
-  }
-  if (first.value !== again.value) {
-    authError('The two passwords differ. Type the same one twice.', again);
-    return;
-  }
-  try {
-    await M.busy(button, () => api.post('/api/setup', { password: first.value }));
-  } catch (error) {
-    authError(error.message, first);
-    return;
-  }
-  auth.hidden = true;
-  start({ welcome: true });
-});
-
-$('#sign-out').addEventListener('click', async () => {
-  try {
-    await api.post('/api/logout');
-  } catch (error) {
-    // Signed out on this side either way.
-  }
-  ctx.session = null;
-  showAuth(false, 'You are signed out.', '');
-});
-
-api.whenSignedOut(() => {
-  if (!auth.hidden) return;
-  ctx.session = null;
-  showAuth(false, 'Your session ended. Sign in again.');
-});
-
 /* ── Wiring ───────────────────────────────────────────────────────── */
 
 DS.init(document);
@@ -442,33 +361,13 @@ const SKELETON = '<div class="ds-skeleton" role="status"><span class="ds-sr">Loa
   '<div class="ds-skeleton__card" aria-hidden="true"><span class="ds-skeleton__line ds-skeleton__line--title"></span><span class="ds-skeleton__line"></span>' +
   '<span class="ds-skeleton__line ds-skeleton__line--mid"></span></div></div>';
 
-/* The first load: a skeleton while the first view's data comes, then the view staggers in once. */
-async function start({ welcome = false } = {}) {
-  let session;
-  try {
-    session = await reloadSession();
-  } catch (error) {
-    boot.hidden = true;
-    auth.hidden = false;
-    loginForm.hidden = true;
-    setupForm.hidden = true;
-    DS.dom.morphHtml(authAlert, alertHtml('error', 'Socrates API does not answer', esc(error.message),
-      '<a class="ds-btn ds-btn--text ds-sm" href="">Try again</a>'));
-    return;
-  }
-  if (session.needsPassword) {
-    showAuth(true);
-    return;
-  }
-  if (!session.signedIn) {
-    showAuth(false);
-    return;
-  }
-  boot.hidden = true;
-  auth.hidden = true;
-  app.hidden = false;
+/* The first load, once the shell has someone signed in: a skeleton while the first view's data comes, then the view
+   staggers in once. */
+async function start() {
+  ctx.session = await startShell();
   const startedAt = Date.now();
   DS.dom.morphHtml(page, SKELETON, { replace: true });
+  connect();
   try {
     takeStatus(await api.get('/api/status'));
   } catch (error) {
@@ -488,8 +387,6 @@ async function start({ welcome = false } = {}) {
   show(next, route, params, data, error);
   if (!error && next.mount) next.mount(data, params);
   M.staggerOnce(page);
-  connect();
-  if (welcome) toast('The password is set. Next: add a model.');
   document.documentElement.setAttribute('data-so-ready', '');
 }
 

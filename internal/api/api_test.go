@@ -208,7 +208,7 @@ func TestFirstPasswordAndGuards(t *testing.T) {
 	r.expect(r.do("GET", "/", nil, host("socrates.example.com")), 403)
 	// The page and Z-Dash are served, with the server's policy.
 	page := r.expect(r.do("GET", "/", nil), 200)
-	if !strings.Contains(page.raw, "ds.min.js") {
+	if !strings.Contains(page.raw, `src="/z-dash/ds.min.js"`) {
 		t.Fatalf("index.html: %.200s", page.raw)
 	}
 	if !strings.Contains(page.header.Get("Content-Security-Policy"), "script-src 'self'") {
