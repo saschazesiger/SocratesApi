@@ -135,6 +135,11 @@ func main() {
 		// up to 256 MB, from clients on slow links: no bound on how long
 		// they take to arrive.
 		ReadTimeout: -1,
+		// The model API passes Cloudflare Access without a login: API
+		// clients cannot sign in there. Its keys protect it, and through
+		// the tunnel a key is always needed.
+		Bypass:      map[string]http.Handler{api.ModelAPIPath: api.ModelAPI(px)},
+		BypassLabel: "model API",
 		KV:          store.ServerKV{St: st},
 		Sealer:      sealer,
 		Logf:        logf,

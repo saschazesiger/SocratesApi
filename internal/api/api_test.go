@@ -49,9 +49,14 @@ func newRig(t *testing.T, st *store.Store) *rig {
 		t.Fatal(err)
 	}
 	var built atomic.Pointer[Server]
+	eng := engine.New(engine.Config{ModelsDir: dir}, st, &sysinfo.Reader{DataDir: dir})
+	px := proxy.New(eng, st)
 	app, err := server.New(server.Config{
 		Name: "Socrates API", Slug: "socrates", Version: "test", DataDir: dir,
-		Assets: web.FS, KV: store.ServerKV{St: st}, Sealer: box, Tunnel: cloudflare.NewDemo("Socrates API", nil), Logf: t.Logf,
+		Assets: web.FS, KV: store.ServerKV{St: st}, Sealer: box, Logf: t.Logf,
+		Tunnel:      cloudflare.NewDemo("Socrates API", []string{ModelAPIPath}),
+		Bypass:      map[string]http.Handler{ModelAPIPath: ModelAPI(px)},
+		BypassLabel: "model API",
 		OnSignOut: func() {
 			if s := built.Load(); s != nil {
 				s.SignedOut()
@@ -61,9 +66,8 @@ func newRig(t *testing.T, st *store.Store) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
-	eng := engine.New(engine.Config{ModelsDir: dir}, st, &sysinfo.Reader{DataDir: dir})
 	hfc := hf.NewClient(func() string { return "" })
-	srv := New(Deps{App: app, Store: st, Engine: eng, Proxy: proxy.New(eng, st), HF: hfc, Downloader: hf.NewDownloader(hfc),
+	srv := New(Deps{App: app, Store: st, Engine: eng, Proxy: px, HF: hfc, Downloader: hf.NewDownloader(hfc),
 		Version: "test", ModelsDir: dir, Logf: t.Logf})
 	built.Store(srv)
 	return &rig{t: t, st: st, app: app, srv: srv, h: app.Handler()}
@@ -229,7 +233,7 @@ func TestFirstPasswordAndGuards(t *testing.T) {
 
 // TestModelAPIIsUnguarded: API clients call /v1/ and /health by any name,
 // without a session and without the CSRF header; the proxy's own keys
-// decide.
+// decide. /v1 is a bypass path of the server.
 func TestModelAPIIsUnguarded(t *testing.T) {
 	r := newRig(t, openStore(t))
 	public := host("socrates.example.com")
@@ -342,4 +346,44 @@ func TestStreamEndsOnSignOut(t *testing.T) {
 	if _, err := io.Copy(io.Discard, rd); err != nil {
 		t.Fatalf("the stream did not end after the sign-out: %v", err)
 	}
+}
+
+// TestModelAPIThroughTheTunnel: Cloudflare Access lets /v1 through without
+// a login, so there a key is always needed, even with "Require an API key"
+// off; everything else through the tunnel needs the Access login.
+func TestModelAPIThroughTheTunnel(t *testing.T) {
+	r := newRig(t, openStore(t))
+	r.expect(r.do("POST", "/api/setup/password", map[string]string{"password": "correct horse battery"}), 200)
+	r.expect(r.do("PUT", "/api/settings", map[string]any{"requireKey": false}), 200)
+	r.h = r.app.TunnelHandler()
+	r.cookie = nil
+	public := host("socrates.example.com")
+	noCSRF := func(req *http.Request) { req.Header.Del(server.CSRFHeader) }
+
+	got := r.expect(r.do("GET", "/v1/models", nil, public), 401)
+	if !strings.Contains(got.raw, "authentication_error") {
+		t.Fatalf("not the proxy's answer: %s", got.raw)
+	}
+	r.expect(r.do("GET", "/v1/models", nil, public, func(req *http.Request) {
+		req.Header.Set("Authorization", "Bearer sk-soc-not-a-key")
+	}), 401)
+	secret := "sk-soc-test0123456789"
+	if _, err := r.st.AddKey("test", "sk-soc-test", proxy.HashKey(secret)); err != nil {
+		t.Fatal(err)
+	}
+	withKey := func(req *http.Request) { req.Header.Set("Authorization", "Bearer "+secret) }
+	r.expect(r.do("GET", "/v1/models", nil, public, withKey), 200)
+	got = r.do("POST", "/v1/chat/completions", map[string]any{"messages": []any{}}, public, noCSRF, withKey)
+	if got.code == http.StatusForbidden || got.code == http.StatusUnauthorized {
+		t.Fatalf("the model API with a key was refused through the tunnel: %d %s", got.code, got.raw)
+	}
+
+	// The interface, its API and /health need the Access login there.
+	for _, path := range []string{"/", "/api/models", "/api/session", "/health", "/v1x"} {
+		r.expect(r.do("GET", path, nil, public), 403)
+	}
+
+	// On the local address the setting still decides.
+	r.h = r.app.Handler()
+	r.expect(r.do("GET", "/v1/models", nil), 200)
 }

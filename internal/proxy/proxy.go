@@ -34,9 +34,11 @@ type Engine interface {
 
 // Proxy forwards model requests.
 type Proxy struct {
-	Engine     Engine
-	Store      *store.Store
-	RequireKey func() bool
+	Engine Engine
+	Store  *store.Store
+	// RequireKey says whether a request needs a valid key; with false,
+	// keys are still checked and counted when one is sent.
+	RequireKey func(r *http.Request) bool
 	// Changed is called when the activity changed (for live updates).
 	Changed func()
 	// RequestLogged is called after a request was written to the log.
@@ -96,7 +98,7 @@ type Activity struct {
 func New(e Engine, st *store.Store) *Proxy {
 	return &Proxy{
 		Engine: e, Store: st, LoadTimeout: 20 * time.Minute,
-		RequireKey: func() bool { return true },
+		RequireKey: func(*http.Request) bool { return true },
 		client:     &http.Client{Transport: &http.Transport{MaxIdleConnsPerHost: 64, DisableCompression: true}},
 		inflight:   map[string]*Req{},
 		Logf:       func(string, ...any) {},
@@ -166,14 +168,15 @@ func apiError(w http.ResponseWriter, code int, typ, msg string) {
 func (p *Proxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var key store.Key
 	secret := bearer(r)
-	if p.RequireKey() || secret != "" {
+	need := p.RequireKey(r)
+	if need || secret != "" {
 		if secret == "" {
 			apiError(w, http.StatusUnauthorized, "authentication_error", "An API key is needed: send it as 'Authorization: Bearer sk-soc-...'. Create one on the API page of Socrates API.")
 			return
 		}
 		k, err := p.Store.KeyByHash(HashKey(secret))
 		if err != nil {
-			if p.RequireKey() {
+			if need {
 				apiError(w, http.StatusUnauthorized, "authentication_error", "This API key is not valid (revoked or mistyped).")
 				return
 			}

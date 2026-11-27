@@ -75,6 +75,14 @@ func (s *Server) HFToken() string { return s.settings().HFToken }
 
 func (s *Server) requireKey() bool { return *s.settings().RequireKey }
 
+// keyNeeded is the proxy's question: a request through the Cloudflare
+// tunnel always needs a key, as Cloudflare Access lets the model API
+// through without a login and the internet reaches it; on the local
+// address the setting decides.
+func (s *Server) keyNeeded(r *http.Request) bool {
+	return server.Who(r).Via == "tunnel" || s.requireKey()
+}
+
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	st := s.settings()
 	tok := ""

@@ -57,7 +57,7 @@ func New(d Deps) *Server {
 	d.Engine.OnLog = s.hub.log
 	d.Proxy.Changed = s.hub.statusChanged
 	d.Proxy.RequestLogged = func() { s.notify("requests", "keys") }
-	d.Proxy.RequireKey = s.requireKey
+	d.Proxy.RequireKey = s.keyNeeded
 	d.Downloader.Changed = func() { s.hub.statusChanged(); s.notify("models") }
 	d.Downloader.Done = s.downloadDone
 	if d.Converter != nil {
@@ -94,6 +94,16 @@ func (s *Server) Run(ctx context.Context) {
 	}
 }
 
+// ModelAPI is the model API at /v1, for server.Config.Bypass: Cloudflare
+// Access lets it through without a login, the local listener answers it
+// by any name, and nothing asks for a session or the CSRF header. The
+// proxy's API keys protect it; through the tunnel a key is always needed
+// (keyNeeded).
+func ModelAPI(p *proxy.Proxy) http.Handler { return cors(p) }
+
+// ModelAPIPath is the model API's bypass path.
+const ModelAPIPath = "/v1"
+
 // cors lets browser-based clients call the model API; it is protected by
 // API keys, not by cookies, so any origin is fine.
 func cors(h http.Handler) http.Handler {
@@ -109,13 +119,13 @@ func cors(h http.Handler) http.Handler {
 	})
 }
 
-// routes registers Socrates API's routes. /v1/ and /health are unguarded:
-// API clients call them by any host name, without a session, and the
-// proxy checks its own API keys. Every /api/ route is for signed-in
-// people and passes the server's CSRF guard.
+// routes registers Socrates API's routes. The model API (/v1) is a bypass
+// path of the server (ModelAPI, given to server.New). /health is
+// unguarded: monitoring calls it by any host name, without a session;
+// through the tunnel it needs the Access login. Every /api/ route is for
+// signed-in people and passes the server's CSRF guard.
 func (s *Server) routes() {
 	app := s.d.App
-	app.Unguarded("/v1/", cors(s.d.Proxy).ServeHTTP)
 	app.Unguarded("GET /health", s.publicHealth)
 
 	// The live status and the engine log; the change notices of the lists
