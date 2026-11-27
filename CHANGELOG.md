@@ -5,7 +5,10 @@
 - 🌐 **Remote access.** *Settings* → *Remote access* sets up a Cloudflare tunnel from an API token: the tunnel, a DNS
   record, Cloudflare Access with a one-time PIN by e-mail for the addresses you list, `cloudflared` (downloaded into
   `/data/bin` when missing, checksummed) and a check from outside. No open port; the local address and the password
-  keep working. Through the tunnel every path needs the Access login, the model API included.
+  keep working. Through the tunnel the interface needs the Access login; the model API (`/v1`) passes without it
+  and always needs an API key there, even with *Require an API key* off. The image brings a pinned `cloudflared`.
+- 🔐 The Hugging Face token is stored encrypted (`secret.key`), like the Cloudflare token; a stored one is encrypted
+  on the first start. The live status stream and a running chat end at once when their person is signed out.
 - 🏗️ **On the Z-Dash server.** The listener, the sign-in, the Host and CSRF guards, the Content-Security-Policy, the
   live change notices and Z-Dash itself now come from the Go module `github.com/saschazesiger/Z-Dash/server`;
   Socrates keeps its API, its database and its interface. Nothing to do on an update: the admin password and the

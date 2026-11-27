@@ -71,8 +71,10 @@ It brings the listener, the sign-in (the admin password on the local address, Cl
 tunnel), the Host and CSRF guards, the Content-Security-Policy, the change notices (`/api/events`), the Cloudflare
 tunnel, and Z-Dash 3 itself, served at `/z-dash/`; the shell at `/z-dash/server/` draws the sign-in, the account
 capsule and the tunnel and password parts of *Settings*. Socrates registers its own routes on it (`internal/api`):
-`/api/*` for signed-in people, `/v1/` and `/health` as unguarded routes (any host name, no session: the proxy's
-keys decide). It keeps its own database; the server keeps its password, sessions and tunnel in Socrates' `kv`
+`/api/*` for signed-in people, `/health` as an unguarded route (any host name, no session) and the model API `/v1` as
+a bypass path (`Config.Bypass`: any host name, no session, no Cloudflare Access login; the proxy's keys decide, and
+through the tunnel a key is always needed). Its own long-lived requests (`/api/stream`, `/api/chat`) end through
+`Config.OnSignOut` and `app.StillSignedIn`. The Hugging Face token is sealed with `app.Secrets()`. It keeps its own database; the server keeps its password, sessions and tunnel in Socrates' `kv`
 table (`store.ServerKV`), under the keys and in the format Socrates used before, so an update keeps them. The
 cookie stays `socrates_session` (slug `socrates`).
 

@@ -60,7 +60,8 @@ out. Remove the variable afterwards.
 
 Away from home? *Settings* → *Remote access* sets up a Cloudflare tunnel with a Cloudflare API token: an address
 such as `https://socrates.example.com`, a login by e-mail (Cloudflare Access) for the addresses you list, no open
-port. The local address and the password keep working.
+port. The local address and the password keep working. API clients reach `/v1` there with a key, without the
+login ([API](api.md#-through-the-cloudflare-tunnel)).
 
 ## 🤗 4. Add a model
 

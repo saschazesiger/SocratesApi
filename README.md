@@ -164,8 +164,8 @@ of failing. Ready-made setups for opencode, the OpenAI SDK and Anthropic clients
 ## 🔒 Security
 
 Socrates API is made for **your local network**. The interface is protected by the admin password, the API by API
-keys (on by default). Do not publish port 8080 on the internet: for the interface away from home, set up the
-Cloudflare tunnel under *Settings* (Cloudflare Access signs people in by e-mail), or use a VPN. Details:
+keys (on by default). Do not publish port 8080 on the internet: away from home, set up the Cloudflare tunnel under
+*Settings* (Cloudflare Access signs people in by e-mail; the model API passes with a key), or use a VPN. Details:
 [Security](docs/security.md).
 
 ## 📚 Documentation

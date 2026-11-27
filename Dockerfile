@@ -21,12 +21,26 @@ RUN apk add --no-cache curl tar \
  && curl -fsSL "https://github.com/ggml-org/llama.cpp/archive/${LLAMA_CPP_COMMIT}.tar.gz" | tar -xz -C /tmp/src --strip-components=1 \
  && cd /tmp/src && cp -r convert_hf_to_gguf.py conversion gguf-py requirements LICENSE /out/
 
+# cloudflared for the Cloudflare tunnel, part of the image, pinned with its
+# checksum (as the Z-Dash server's template does; the server would download
+# the same version into /data/bin otherwise). The release page of
+# cloudflare/cloudflared lists both.
+FROM alpine:3.22 AS cloudflared
+ARG CLOUDFLARED_VERSION=2026.10.7
+ARG CLOUDFLARED_SHA256=1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872
+ADD https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-linux-amd64 /cloudflared
+RUN echo "${CLOUDFLARED_SHA256}  /cloudflared" | sha256sum -c - && chmod 0755 /cloudflared
+
 FROM ghcr.io/ggml-org/llama.cpp:server-cuda12-${LLAMA_CPP_BUILD}
 RUN apt-get update \
  && apt-get install -y --no-install-recommends python3-venv ca-certificates \
  && rm -rf /var/lib/apt/lists/*
 COPY --from=convert /out /opt/llama-convert
+COPY --from=cloudflared /cloudflared /usr/local/bin/cloudflared
 COPY --from=build /out/socrates /usr/local/bin/socrates
+# The tunnel's listener stays the Unix socket in /data/run (not the
+# template's 127.0.0.1:8081): Socrates often runs with --network host, where
+# a fixed loopback port would be the host's.
 ENV SOCRATES_DATA=/data \
     SOCRATES_PORT=8080 \
     SOCRATES_LLAMA_SERVER=/app/llama-server \

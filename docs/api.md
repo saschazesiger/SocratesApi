@@ -8,9 +8,21 @@ The model API is OpenAI- and Anthropic-compatible and lives on the same port as 
 | **Key** | `Authorization: Bearer sk-soc-…`, or `x-api-key: sk-soc-…` |
 | **Model** | any name: requests always go to the active model. `GET /v1/models` names it. |
 
-Clients may call it by any host name (no host-name check on `/v1` and `/health`); keys protect it. Through the
-Cloudflare tunnel of *Settings* → *Remote access*, every path needs the Cloudflare Access login, `/v1` included, so
-API clients use the local address (or a VPN).
+Clients may call it by any host name (no host-name check on `/v1` and `/health`); keys protect it.
+
+## 🌐 Through the Cloudflare tunnel
+
+With the tunnel of *Settings* → *Remote access*, the model API is reachable from anywhere:
+
+| | |
+|---|---|
+| **Base URL** | `https://socrates.example.com/v1` (the tunnel's address; the *API* page shows it when opened through the tunnel) |
+| **Login** | none: Cloudflare Access lets `/v1` through (an Access application of its own, *Bypass*), API clients cannot sign in there |
+| **Key** | always required through the tunnel, even with *Require an API key* off |
+| **Everything else** | the interface, `/api` and `/health` need the Access login |
+
+A tunnel set up before this version needs *Repair* once (*Settings* → *Remote access*) to create the Access
+application for `/v1`; until then the tunnel's check says the model API asks for a login.
 
 ## 🔑 API keys
 
