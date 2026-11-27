@@ -112,6 +112,8 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "retry: 3000\n\n")
 	flusher.Flush()
 
+	r, done := s.watch.watch(r)
+	defer done()
 	c := s.hub.add()
 	select { // the first status at once; a wake may be pending already
 	case c.wake <- struct{}{}:
@@ -133,9 +135,6 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 		case <-c.done:
 			return
 		case <-ping.C:
-			if !s.d.App.SignedIn(r) {
-				return // signed out elsewhere (password changed)
-			}
 			if _, err := fmt.Fprint(w, ": ping\n\n"); err != nil {
 				return
 			}

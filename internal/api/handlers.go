@@ -693,6 +693,8 @@ func (s *Server) chat(w http.ResponseWriter, r *http.Request) {
 		body["model"] = s.d.Engine.ActiveID()
 	}
 	b, _ := json.Marshal(body)
+	r, done := s.watch.watch(r)
+	defer done()
 	r2 := r.Clone(r.Context())
 	r2.URL.Path = "/v1/chat/completions"
 	r2.URL.RawQuery = ""

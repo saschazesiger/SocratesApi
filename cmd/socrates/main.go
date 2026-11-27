@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -118,6 +119,9 @@ func main() {
 	if os.Getenv("SOCRATES_LISTEN") == "" {
 		listen = net.JoinHostPort(env("SOCRATES_HOST", ""), port)
 	}
+	// The API is built after the server; a sign-out that comes before (the
+	// admin password set from the environment) finds no stream to end.
+	var apiSrv atomic.Pointer[api.Server]
 	app, err := server.New(server.Config{
 		// The slug keeps the cookie (socrates_session) and the environment
 		// prefix (SOCRATES_) of earlier versions.
@@ -134,6 +138,13 @@ func main() {
 		KV:          store.ServerKV{St: st},
 		Sealer:      sealer,
 		Logf:        logf,
+		// The status stream and the chat are Socrates' own long-lived
+		// requests: they end when their person is signed out.
+		OnSignOut: func() {
+			if s := apiSrv.Load(); s != nil {
+				s.SignedOut()
+			}
+		},
 	})
 	if err != nil {
 		logger.Fatalf("%v", err)
@@ -142,6 +153,7 @@ func main() {
 		App: app, Store: st, Engine: eng, Proxy: px, HF: hfc, Downloader: dl, Converter: conv,
 		Version: version, ModelsDir: modelsDir, Logf: logf,
 	})
+	apiSrv.Store(srv)
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()

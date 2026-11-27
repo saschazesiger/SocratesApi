@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -47,9 +48,15 @@ func newRig(t *testing.T, st *store.Store) *rig {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var built atomic.Pointer[Server]
 	app, err := server.New(server.Config{
 		Name: "Socrates API", Slug: "socrates", Version: "test", DataDir: dir,
 		Assets: web.FS, KV: store.ServerKV{St: st}, Sealer: box, Tunnel: cloudflare.NewDemo("Socrates API", nil), Logf: t.Logf,
+		OnSignOut: func() {
+			if s := built.Load(); s != nil {
+				s.SignedOut()
+			}
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -58,6 +65,7 @@ func newRig(t *testing.T, st *store.Store) *rig {
 	hfc := hf.NewClient(func() string { return "" })
 	srv := New(Deps{App: app, Store: st, Engine: eng, Proxy: proxy.New(eng, st), HF: hfc, Downloader: hf.NewDownloader(hfc),
 		Version: "test", ModelsDir: dir, Logf: t.Logf})
+	built.Store(srv)
 	return &rig{t: t, st: st, app: app, srv: srv, h: app.Handler()}
 }
 
@@ -302,4 +310,36 @@ func TestLiveUpdates(t *testing.T) {
 	events := open("/api/events")
 	r.srv.notify("settings")
 	until(events, `"settings"`)
+}
+
+// TestStreamEndsOnSignOut: the status stream of a browser ends when its
+// session ends, not only at the next reconnect.
+func TestStreamEndsOnSignOut(t *testing.T) {
+	r := newRig(t, openStore(t))
+	r.expect(r.do("POST", "/api/setup/password", map[string]string{"password": "correct horse battery"}), 200)
+	ts := httptest.NewServer(r.h)
+	defer ts.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, "GET", ts.URL+"/api/stream", nil)
+	req.AddCookie(r.cookie)
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	rd := bufio.NewReader(res.Body)
+	for {
+		line, err := rd.ReadString('\n')
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(line, "event: status") {
+			break
+		}
+	}
+	r.expect(r.do("POST", "/api/logout", nil), 200)
+	if _, err := io.Copy(io.Discard, rd); err != nil {
+		t.Fatalf("the stream did not end after the sign-out: %v", err)
+	}
 }

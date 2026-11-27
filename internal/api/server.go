@@ -41,8 +41,9 @@ type Deps struct {
 
 // Server is Socrates API's API on the Z-Dash server.
 type Server struct {
-	d   Deps
-	hub *hub
+	d     Deps
+	hub   *hub
+	watch *watcher
 }
 
 // New registers the routes on d.App and hooks the server to the live
@@ -51,7 +52,7 @@ func New(d Deps) *Server {
 	if d.Logf == nil {
 		d.Logf = func(string, ...any) {}
 	}
-	s := &Server{d: d, hub: newHub()}
+	s := &Server{d: d, hub: newHub(), watch: newWatcher(d.App.StillSignedIn)}
 	d.Engine.OnChange = s.hub.statusChanged
 	d.Engine.OnLog = s.hub.log
 	d.Proxy.Changed = s.hub.statusChanged
@@ -72,11 +73,14 @@ func New(d Deps) *Server {
 // page refetches them (the server's change notices at /api/events).
 func (s *Server) notify(topics ...string) { s.d.App.Notify(topics...) }
 
-// Run does the periodic work: a status push every 2 s, so meters move.
+// Run does the periodic work: a status push every 2 s, so meters move,
+// and a look at who is still signed in.
 func (s *Server) Run(ctx context.Context) {
 	s.resume()
 	t := time.NewTicker(2 * time.Second)
 	defer t.Stop()
+	again := time.NewTicker(recheck)
+	defer again.Stop()
 	for {
 		select {
 		case <-ctx.Done():
@@ -84,6 +88,8 @@ func (s *Server) Run(ctx context.Context) {
 			return
 		case <-t.C:
 			s.hub.statusChanged()
+		case <-again.C:
+			s.watch.check()
 		}
 	}
 }
