@@ -135,7 +135,8 @@ func (s *Server) keyNeeded(r *http.Request) bool {
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	st := s.settings()
 	tok := ""
-	if st.HFToken != "" || len(st.HFTokenSealed) > 0 {
+	// "set" only when it opens: with another secret.key it must be set again.
+	if s.hfToken(st) != "" {
 		tok = "set"
 	}
 	writeJSON(w, 200, map[string]any{"hfToken": tok, "requireKey": *st.RequireKey, "modelsDir": s.d.ModelsDir})

@@ -8,7 +8,7 @@
   keep working. Through the tunnel the interface needs the Access login; the model API (`/v1`) passes without it
   and always needs an API key there, even with *Require an API key* off. The image brings a pinned `cloudflared`.
 - 🔐 The Hugging Face token is stored encrypted (`secret.key`), like the Cloudflare token; a stored one is encrypted
-  on the first start. The live status stream and a running chat end at once when their person is signed out.
+  on the first start (an older version started on the same data no longer finds it: set it again there). The live status stream and a running chat end at once when their person is signed out.
 - 🏗️ **On the Z-Dash server.** The listener, the sign-in, the Host and CSRF guards, the Content-Security-Policy, the
   live change notices and Z-Dash itself now come from the Go module `github.com/saschazesiger/Z-Dash/server`;
   Socrates keeps its API, its database and its interface. Nothing to do on an update: the admin password and the

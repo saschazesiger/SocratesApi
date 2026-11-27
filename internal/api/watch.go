@@ -42,13 +42,17 @@ func (w *watcher) watch(r *http.Request) (*http.Request, func()) {
 }
 
 // check ends every watched request whose person is no longer signed in.
+// still reads the database, so it runs on a copy, without the lock.
 func (w *watcher) check() {
 	w.mu.Lock()
-	defer w.mu.Unlock()
+	reqs := make(map[*http.Request]context.CancelFunc, len(w.reqs))
 	for r, cancel := range w.reqs {
+		reqs[r] = cancel
+	}
+	w.mu.Unlock()
+	for r, cancel := range reqs {
 		if !w.still(r) {
-			cancel()
-			delete(w.reqs, r)
+			cancel() // done removes it from w.reqs
 		}
 	}
 }
