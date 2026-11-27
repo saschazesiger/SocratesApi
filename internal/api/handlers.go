@@ -56,9 +56,17 @@ func (s *Server) status() statusView {
 // --- settings ----------------------------------------------------------------
 
 type settings struct {
-	HFToken    string `json:"hfToken"`
-	RequireKey *bool  `json:"requireKey"`
+	// HFToken is the Hugging Face token as earlier versions kept it,
+	// in plain text; sealHFToken moves it into HFTokenSealed.
+	HFToken string `json:"hfToken,omitempty"`
+	// HFTokenSealed is the token sealed with the server's secret box
+	// (secret.key or SOCRATES_SECRET_KEY), as the tunnel's token is.
+	HFTokenSealed []byte `json:"hfTokenSealed,omitempty"`
+	RequireKey    *bool  `json:"requireKey"`
 }
+
+// hfTokenObject is the name the token is sealed under.
+const hfTokenObject = "settings.hfToken"
 
 func (s *Server) settings() settings {
 	var st settings
@@ -71,7 +79,48 @@ func (s *Server) settings() settings {
 }
 
 // HFToken is the Hugging Face token, for the client.
-func (s *Server) HFToken() string { return s.settings().HFToken }
+func (s *Server) HFToken() string { return s.hfToken(s.settings()) }
+
+func (s *Server) hfToken(st settings) string {
+	if len(st.HFTokenSealed) == 0 {
+		return st.HFToken
+	}
+	plain, err := s.d.App.Secrets().Open(hfTokenObject, st.HFTokenSealed)
+	if err != nil {
+		s.d.Logf("The Hugging Face token cannot be opened (was secret.key replaced?); set it again under API → Settings: %v", err)
+		return ""
+	}
+	return string(plain)
+}
+
+// setHFToken stores the token sealed; "" removes it.
+func (s *Server) setHFToken(st *settings, token string) error {
+	st.HFToken, st.HFTokenSealed = "", nil
+	if token == "" {
+		return nil
+	}
+	sealed, err := s.d.App.Secrets().Seal(hfTokenObject, []byte(token))
+	if err != nil {
+		return err
+	}
+	st.HFTokenSealed = sealed
+	return nil
+}
+
+// sealHFToken seals a token an earlier version stored in plain text.
+func (s *Server) sealHFToken() {
+	st := s.settings()
+	if st.HFToken == "" {
+		return
+	}
+	if err := s.setHFToken(&st, st.HFToken); err != nil {
+		s.d.Logf("The Hugging Face token could not be sealed: %v", err)
+		return
+	}
+	if err := s.d.Store.SetJSON("settings", st); err != nil {
+		s.d.Logf("The Hugging Face token could not be sealed: %v", err)
+	}
+}
 
 func (s *Server) requireKey() bool { return *s.settings().RequireKey }
 
@@ -86,7 +135,7 @@ func (s *Server) keyNeeded(r *http.Request) bool {
 func (s *Server) getSettings(w http.ResponseWriter, r *http.Request) {
 	st := s.settings()
 	tok := ""
-	if st.HFToken != "" {
+	if st.HFToken != "" || len(st.HFTokenSealed) > 0 {
 		tok = "set"
 	}
 	writeJSON(w, 200, map[string]any{"hfToken": tok, "requireKey": *st.RequireKey, "modelsDir": s.d.ModelsDir})
@@ -107,7 +156,10 @@ func (s *Server) putSettings(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, 400, apiError{Error: "A Hugging Face token starts with hf_.", Fields: map[string]string{"hfToken": "A Hugging Face token starts with hf_."}})
 			return
 		}
-		st.HFToken = t
+		if err := s.setHFToken(&st, t); err != nil {
+			s.fail(w, err)
+			return
+		}
 	}
 	if req.RequireKey != nil {
 		st.RequireKey = req.RequireKey

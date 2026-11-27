@@ -387,3 +387,33 @@ func TestModelAPIThroughTheTunnel(t *testing.T) {
 	r.h = r.app.Handler()
 	r.expect(r.do("GET", "/v1/models", nil), 200)
 }
+
+// TestHFTokenIsSealed: the Hugging Face token is stored sealed, and a
+// token an earlier version kept in plain text is sealed at the start.
+func TestHFTokenIsSealed(t *testing.T) {
+	st := openStore(t)
+	if err := st.SetJSON("settings", map[string]any{"hfToken": "hf_earlier", "requireKey": true}); err != nil {
+		t.Fatal(err)
+	}
+	r := newRig(t, st)
+	if got := r.srv.HFToken(); got != "hf_earlier" {
+		t.Fatalf("token after the start: %q", got)
+	}
+	raw, _ := st.Get("settings")
+	if strings.Contains(string(raw), "hf_earlier") {
+		t.Fatalf("the token is still in plain text: %s", raw)
+	}
+	r.expect(r.do("POST", "/api/setup/password", map[string]string{"password": "correct horse battery"}), 200)
+	got := r.expect(r.do("PUT", "/api/settings", map[string]any{"hfToken": "hf_new"}), 200)
+	if got.body["hfToken"] != "set" {
+		t.Fatalf("settings: %v", got.body)
+	}
+	raw, _ = st.Get("settings")
+	if strings.Contains(string(raw), "hf_new") || r.srv.HFToken() != "hf_new" {
+		t.Fatalf("stored: %s, token %q", raw, r.srv.HFToken())
+	}
+	r.expect(r.do("PUT", "/api/settings", map[string]any{"hfToken": ""}), 200)
+	if r.srv.HFToken() != "" {
+		t.Fatal("the token was not removed")
+	}
+}

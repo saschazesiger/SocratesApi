@@ -65,6 +65,7 @@ func New(d Deps) *Server {
 		d.Converter.Done = s.convertDone
 		d.Converter.Log = s.hub.log
 	}
+	s.sealHFToken()
 	s.routes()
 	return s
 }

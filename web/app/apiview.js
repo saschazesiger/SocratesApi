@@ -143,7 +143,7 @@ function endpointsHtml(d) {
 
 function keysHtml(d) {
   if (!d.keys.length) {
-    return empty({ glyph: 'key', title: 'No API key yet', text: d.settings.requireKey ? 'Create one for each app, so you can revoke it alone.' : 'The API is open right now; keys are optional.',
+    return empty({ glyph: 'key', title: 'No API key yet', text: d.settings.requireKey ? 'Create one for each app, so you can revoke it alone.' : 'The API is open on the local network right now; keys are optional there (through the Cloudflare tunnel a key is always needed).',
       action: '<button class="ds-btn ds-btn--tonal" type="button" data-act="new-key">Create a key</button>' });
   }
   return '<div class="ds-table-wrap"><table class="ds-table"><caption class="ds-sr">API keys</caption><thead><tr>' +
@@ -203,7 +203,7 @@ function quickHtml(d) {
       : alertHtml('warning', 'No model is active', 'The API answers once you activate a model on the <a href="#/models">Models page</a>.')) +
     (d.settings.requireKey
       ? `<p class="ds-meta">${icon('lock', 16)}Every request needs an API key: <code>Authorization: Bearer sk-soc-...</code> (Anthropic clients: <code>x-api-key</code>).</p>`
-      : alertHtml('warning', 'The API is open', 'Anyone who can reach this server can use the model without a key. Turn on "Require an API key" below if that is not what you want.'));
+      : alertHtml('warning', 'The API is open', 'Anyone on the local network who can reach this server can use the model without a key; through the Cloudflare tunnel a key is always needed. Turn on "Require an API key" below if that is not what you want.'));
 }
 
 /* ── The view ─────────────────────────────────────────────────────── */
@@ -242,7 +242,7 @@ export default {
         `<p class="ds-muted">All under <code>${esc(d.baseUrl)}</code>, except <code>/health</code>. Open one for an example.</p>` +
         `<div id="endpoints">${endpointsHtml(d)}</div></section>` +
       '<section class="ds-card" aria-labelledby="settings-title"><h2 class="ds-card__title" id="settings-title">Settings</h2>' +
-        `<div id="require-key">${switchHtml({ id: 'require-key-input', attrs: 'data-act="require-key"', label: 'Require an API key', checked: d.settings.requireKey, hint: 'Off: anyone who can reach port 8080 can use the model. The chat on this page never needs a key.' })}</div>` +
+        `<div id="require-key">${switchHtml({ id: 'require-key-input', attrs: 'data-act="require-key"', label: 'Require an API key', checked: d.settings.requireKey, hint: 'Off: anyone who can reach port 8080 can use the model; through the Cloudflare tunnel a key is always needed. The chat on this page never needs a key.' })}</div>` +
         '<hr class="ds-divider">' +
         `<div id="hf-slot">${tokenHtml(d.settings)}</div>` +
       '</section>';
